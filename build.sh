@@ -64,6 +64,9 @@ for v in /Volumes/dmg.*; do
   [ -e "$v" ] && hdiutil detach "$v" -force >/dev/null 2>&1 || true
 done
 
+# 清掉旧的 bundle 产物，避免误启动到内嵌过期前端的 .app（曾导致 webview 资源加载 panic 崩溃）
+rm -rf src-tauri/target/release/bundle src-tauri/target/debug/bundle 2>/dev/null || true
+
 if [ ! -d node_modules ]; then
   echo "==> 安装前端依赖"
   pnpm install

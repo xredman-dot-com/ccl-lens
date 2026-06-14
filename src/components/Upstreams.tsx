@@ -110,6 +110,9 @@ export function Upstreams({ state, onChange }: Props) {
                 <strong className="up-label">{u.label}</strong>
                 <span className="tag">{u.kind}</span>
                 {pinned && <span className="tag tag-pin">固定</span>}
+                {h.state === "down" && h.consecutive_failures >= 2 && (
+                  <span className="tag tag-broken">熔断</span>
+                )}
                 <span className="grow" />
                 <span className="up-latency">{fmtMs(h.latency_ms)}</span>
               </div>

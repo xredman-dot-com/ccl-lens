@@ -30,7 +30,14 @@ pub fn run() {
                     pool.probe_all().await;
                     let _ = handle.emit("health", commands::health_view(&pool));
                     commands::update_tunnel(handle.clone(), pool.clone(), tunnel.clone()).await;
-                    tokio::time::sleep(Duration::from_secs(interval)).await;
+                    // Adaptive: probe faster while any upstream is down so
+                    // recovery (and failover targets) are detected quickly.
+                    let secs = if pool.any_enabled_down() {
+                        interval.min(5)
+                    } else {
+                        interval
+                    };
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
                 }
             });
             Ok(())

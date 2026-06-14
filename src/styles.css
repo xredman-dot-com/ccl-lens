@@ -440,6 +440,10 @@ code {
   color: var(--accent);
   border-color: var(--accent);
 }
+.tag-broken {
+  color: var(--red);
+  border-color: var(--red);
+}
 .icon-btn {
   background: transparent;
   border: none;

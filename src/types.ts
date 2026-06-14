@@ -32,6 +32,7 @@ export interface Health {
   last_checked: number | null;
   success: number;
   failure: number;
+  consecutive_failures: number;
   last_error: string | null;
 }
 

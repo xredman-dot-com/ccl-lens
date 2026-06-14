@@ -52,6 +52,24 @@ pub async fn start(
     Ok(ProxyHandle { shutdown: Some(tx) })
 }
 
+/// Max upstreams to try within one request before giving up (bounds latency).
+const MAX_FAILOVER: usize = 3;
+
+fn short_send_err(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "timeout".to_string()
+    } else if e.is_connect() {
+        "connect failed".to_string()
+    } else {
+        let s = e.to_string();
+        if s.len() > 120 {
+            s[..120].to_string()
+        } else {
+            s
+        }
+    }
+}
+
 fn is_hop_request(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
@@ -121,40 +139,61 @@ async fn handler(
         }
     }
 
-    // Pick upstream.
-    let sel = match ctx.pool.select() {
-        Some(s) => s,
-        None => {
-            finalize_error(
-                &ctx,
-                record,
-                req_start,
-                503,
-                "no healthy upstream available".to_string(),
-            );
-            return error_response(503, "ccl-lens: no healthy upstream available");
-        }
-    };
-    record.upstream_id = Some(sel.id.clone());
-    record.upstream_label = Some(sel.label.clone());
+    // Ordered failover candidates (Fixed = 1, Sticky/Auto = many).
+    let candidates = ctx.pool.select_ordered();
+    if candidates.is_empty() {
+        finalize_error(&ctx, record, req_start, 503, "无可用上游".to_string());
+        return error_response(503, "ccl-lens: 无可用上游");
+    }
 
     let url = format!("https://api.anthropic.com{}", path_q);
-    let mut rb = sel.client.request(method.clone(), &url);
-    for (name, value) in headers.iter() {
-        if !is_hop_request(name.as_str()) {
-            rb = rb.header(name.clone(), value.clone());
+    let mut chosen: Option<(crate::upstream::Selection, reqwest::Response)> = None;
+    let mut last_err = String::new();
+    let mut tried = 0usize;
+    // Only transport-level failures fail over; any HTTP response means the
+    // tunnel worked, so we keep it (even a 5xx from Anthropic).
+    for sel in candidates.into_iter().take(MAX_FAILOVER) {
+        tried += 1;
+        let attempt_start = Instant::now();
+        let mut rb = sel.client.request(method.clone(), &url);
+        for (name, value) in headers.iter() {
+            if !is_hop_request(name.as_str()) {
+                rb = rb.header(name.clone(), value.clone());
+            }
+        }
+        rb = rb.body(reqwest::Body::from(body.clone()));
+        match rb.send().await {
+            Ok(resp) => {
+                ctx.pool
+                    .record_success(&sel.id, attempt_start.elapsed().as_millis() as u64);
+                chosen = Some((sel, resp));
+                break;
+            }
+            Err(e) => {
+                last_err = short_send_err(&e);
+                ctx.pool.record_failure(&sel.id, last_err.clone());
+            }
         }
     }
-    rb = rb.body(reqwest::Body::from(body));
 
-    let resp = match rb.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = format!("upstream send failed: {}", e);
+    let (sel, resp) = match chosen {
+        Some(c) => c,
+        None => {
+            // Every candidate failed: kick an immediate re-probe and report.
+            let pool = ctx.pool.clone();
+            let app = ctx.app.clone();
+            tauri::async_runtime::spawn(async move {
+                pool.probe_all().await;
+                let _ = app.emit("health", crate::commands::health_view(&pool));
+            });
+            let msg = format!("全部上游不可用 ({} 次尝试): {}", tried, last_err);
             finalize_error(&ctx, record, req_start, 502, msg.clone());
             return error_response(502, &format!("ccl-lens: {}", msg));
         }
     };
+    record.upstream_id = Some(sel.id.clone());
+    record.upstream_label = Some(sel.label.clone());
+    let stream_upstream_id = sel.id.clone();
 
     let status = resp.status();
     record.status = Some(status.as_u16());
@@ -170,6 +209,7 @@ async fn handler(
 
     let store = ctx.store.clone();
     let app = ctx.app.clone();
+    let pool_for_stream = ctx.pool.clone();
 
     let stream = async_stream::stream! {
         let mut acc = SseAccumulator::new();
@@ -186,6 +226,9 @@ async fn handler(
                     yield Ok::<Bytes, std::io::Error>(bytes);
                 }
                 Err(e) => {
+                    // Mid-stream drop: degrade this upstream so the next request
+                    // (CC's retry) avoids it.
+                    pool_for_stream.record_failure(&stream_upstream_id, format!("stream: {}", e));
                     acc.error = Some(format!("stream error: {}", e));
                     yield Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
                     break;

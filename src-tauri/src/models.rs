@@ -49,6 +49,8 @@ pub struct Health {
     pub last_checked: Option<i64>,
     pub success: u32,
     pub failure: u32,
+    #[serde(default)]
+    pub consecutive_failures: u32,
     pub last_error: Option<String>,
 }
 
@@ -60,6 +62,7 @@ impl Default for Health {
             last_checked: None,
             success: 0,
             failure: 0,
+            consecutive_failures: 0,
             last_error: None,
         }
     }

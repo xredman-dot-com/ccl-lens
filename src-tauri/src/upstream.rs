@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 const PROBE_URL: &str = "https://api.anthropic.com/";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Consecutive real-request failures before an upstream is circuit-broken (Down).
+const CIRCUIT_THRESHOLD: u32 = 2;
 
 struct Inner {
     upstreams: Vec<Upstream>,
@@ -146,8 +148,11 @@ impl Pool {
         inner.pinned_id = pinned_id;
     }
 
-    /// Pick an upstream for a new request according to the active mode.
-    pub fn select(&self) -> Option<Selection> {
+    /// Ordered failover candidates for a new request, per the active mode.
+    /// Fixed -> only the pinned channel (strict, no failover).
+    /// Sticky -> usable pinned first, then healthy-by-latency, then the rest.
+    /// Auto -> healthy-by-latency, then the rest.
+    pub fn select_ordered(&self) -> Vec<Selection> {
         let inner = self.inner.read().unwrap();
         let enabled: Vec<&Upstream> = inner
             .upstreams
@@ -155,7 +160,7 @@ impl Pool {
             .filter(|u| u.enabled && inner.clients.contains_key(&u.id))
             .collect();
         if enabled.is_empty() {
-            return None;
+            return vec![];
         }
 
         let is_usable = |id: &str| -> bool {
@@ -171,42 +176,96 @@ impl Pool {
                 .and_then(|h| h.latency_ms)
                 .unwrap_or(u64::MAX)
         };
-        let best_healthy = || -> Option<&Upstream> {
-            enabled
-                .iter()
-                .filter(|u| is_usable(&u.id))
-                .min_by_key(|u| latency(&u.id))
-                .copied()
+        // All enabled, usable first then by latency.
+        let by_pref = || -> Vec<&Upstream> {
+            let mut v = enabled.clone();
+            v.sort_by_key(|u| (!is_usable(&u.id), latency(&u.id)));
+            v
         };
         let pinned = inner
             .pinned_id
             .as_ref()
             .and_then(|pid| enabled.iter().find(|u| &u.id == pid).copied());
 
-        let chosen: Option<&Upstream> = match inner.mode {
-            SelectMode::Fixed => pinned.or_else(|| enabled.first().copied()),
+        let order: Vec<&Upstream> = match inner.mode {
+            SelectMode::Fixed => match pinned {
+                Some(p) => vec![p],
+                None => vec![enabled[0]],
+            },
             SelectMode::Sticky => {
+                let mut v: Vec<&Upstream> = Vec::new();
                 if let Some(p) = pinned {
                     if is_usable(&p.id) {
-                        Some(p)
-                    } else {
-                        best_healthy().or(Some(p))
+                        v.push(p);
                     }
-                } else {
-                    best_healthy().or_else(|| enabled.first().copied())
                 }
+                for u in by_pref() {
+                    if !v.iter().any(|x| x.id == u.id) {
+                        v.push(u);
+                    }
+                }
+                v
             }
-            SelectMode::Auto => best_healthy().or_else(|| enabled.first().copied()),
+            SelectMode::Auto => by_pref(),
         };
 
-        chosen.and_then(|u| {
-            inner.clients.get(&u.id).map(|c| Selection {
-                id: u.id.clone(),
-                label: u.label.clone(),
-                kind: u.kind.clone(),
-                url: u.url.clone(),
-                client: c.clone(),
+        order
+            .into_iter()
+            .filter_map(|u| {
+                inner.clients.get(&u.id).map(|c| Selection {
+                    id: u.id.clone(),
+                    label: u.label.clone(),
+                    kind: u.kind.clone(),
+                    url: u.url.clone(),
+                    client: c.clone(),
+                })
             })
+            .collect()
+    }
+
+    /// Top candidate (used by the tunnel panel).
+    pub fn select(&self) -> Option<Selection> {
+        self.select_ordered().into_iter().next()
+    }
+
+    /// Feed a successful real request back into health (passive check).
+    pub fn record_success(&self, id: &str, latency_ms: u64) {
+        let mut inner = self.inner.write().unwrap();
+        if let Some(h) = inner.health.get_mut(id) {
+            h.state = HealthState::Up;
+            h.success += 1;
+            h.consecutive_failures = 0;
+            h.last_error = None;
+            h.last_checked = Some(now_ms());
+            h.latency_ms = Some(match h.latency_ms {
+                Some(prev) => ((prev as f64) * 0.7 + (latency_ms as f64) * 0.3) as u64,
+                None => latency_ms,
+            });
+        }
+    }
+
+    /// Feed a failed real request back into health; circuit-break on threshold.
+    pub fn record_failure(&self, id: &str, err: String) {
+        let mut inner = self.inner.write().unwrap();
+        if let Some(h) = inner.health.get_mut(id) {
+            h.failure += 1;
+            h.consecutive_failures += 1;
+            h.last_error = Some(err);
+            h.last_checked = Some(now_ms());
+            if h.consecutive_failures >= CIRCUIT_THRESHOLD {
+                h.state = HealthState::Down;
+            }
+        }
+    }
+
+    pub fn any_enabled_down(&self) -> bool {
+        let inner = self.inner.read().unwrap();
+        inner.upstreams.iter().any(|u| {
+            u.enabled
+                && matches!(
+                    inner.health.get(&u.id).map(|h| &h.state),
+                    Some(HealthState::Down)
+                )
         })
     }
 
@@ -251,6 +310,7 @@ impl Pool {
                     let sample = start.elapsed().as_millis() as u64;
                     h.state = HealthState::Up;
                     h.success += 1;
+                    h.consecutive_failures = 0;
                     h.last_error = None;
                     h.latency_ms = Some(match h.latency_ms {
                         Some(prev) => ((prev as f64) * 0.7 + (sample as f64) * 0.3) as u64,
@@ -260,6 +320,7 @@ impl Pool {
                 Err(e) => {
                     h.state = HealthState::Down;
                     h.failure += 1;
+                    h.consecutive_failures += 1;
                     h.last_error = Some(short_err(&e));
                 }
             }
@@ -277,6 +338,45 @@ mod tests {
         assert_eq!(endpoint_of("http://10.0.0.1:8888"), "10.0.0.1:8888");
         assert_eq!(endpoint_of("socks5://h:p@host:5782/path"), "host:5782");
         assert_eq!(endpoint_of(""), "direct");
+    }
+
+    fn ups() -> Vec<crate::models::Upstream> {
+        use crate::models::{Upstream, UpstreamKind};
+        vec![
+            Upstream { id: "a".into(), label: "a".into(), kind: UpstreamKind::Direct, url: "".into(), enabled: true },
+            Upstream { id: "b".into(), label: "b".into(), kind: UpstreamKind::Socks5, url: "socks5://127.0.0.1:1080".into(), enabled: true },
+        ]
+    }
+
+    #[test]
+    fn circuit_breaks_and_orders_unhealthy_last() {
+        use crate::models::SelectMode;
+        let pool = super::Pool::new(ups(), SelectMode::Auto, None);
+        pool.record_failure("a", "x".into());
+        pool.record_failure("a", "x".into()); // >= CIRCUIT_THRESHOLD -> Down
+        let ordered = pool.select_ordered();
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered.first().unwrap().id, "b"); // healthy first
+        assert_eq!(ordered.last().unwrap().id, "a"); // circuit-broken last
+    }
+
+    #[test]
+    fn fixed_mode_has_no_failover() {
+        use crate::models::SelectMode;
+        let pool = super::Pool::new(ups(), SelectMode::Fixed, Some("b".into()));
+        let ordered = pool.select_ordered();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].id, "b");
+    }
+
+    #[test]
+    fn success_clears_circuit() {
+        use crate::models::SelectMode;
+        let pool = super::Pool::new(ups(), SelectMode::Auto, None);
+        pool.record_failure("a", "x".into());
+        pool.record_failure("a", "x".into());
+        pool.record_success("a", 100);
+        assert!(!pool.any_enabled_down());
     }
 }
 

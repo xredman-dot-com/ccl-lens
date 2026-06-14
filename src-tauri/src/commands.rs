@@ -1,9 +1,9 @@
 use crate::models::{
-    kind_str, Health, RequestRecord, SelectMode, Stats, TakeoverMode, TunnelStatus, Upstream,
-    UpstreamKind,
+    kind_str, Health, RequestRecord, SelectMode, Stats, TakeoverMode, TestResult, TunnelStatus,
+    Upstream, UpstreamKind,
 };
 use crate::state::AppState;
-use crate::upstream::{endpoint_of, probe_exit_ip, Pool};
+use crate::upstream::{client_for, endpoint_of, probe_exit_ip, Pool};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
@@ -86,7 +86,9 @@ fn emit_tunnel_now(app: &AppHandle, tunnel: &Arc<Mutex<TunnelStatus>>) {
 }
 
 fn spawn_probe(app: AppHandle, pool: Arc<Pool>) {
-    tokio::spawn(async move {
+    // async_runtime::spawn works from sync commands too (tokio::spawn would
+    // panic without an active runtime and abort across the webview callback).
+    tauri::async_runtime::spawn(async move {
         pool.probe_all().await;
         let _ = app.emit("health", health_view(&pool));
     });
@@ -127,7 +129,7 @@ pub async fn start_intercept(
 
     // Probe the tunnel (exit IP + geo) and upstream health asynchronously.
     let (a, p, t) = (app.clone(), state.pool.clone(), state.tunnel.clone());
-    tokio::spawn(async move { update_tunnel(a, p, t).await });
+    tauri::async_runtime::spawn(async move { update_tunnel(a, p, t).await });
     spawn_probe(app, state.pool.clone());
     Ok(build_view(&state))
 }
@@ -150,6 +152,61 @@ pub fn stop_intercept(app: AppHandle, state: State<'_, AppState>) -> Result<AppS
 #[tauri::command]
 pub fn get_tunnel(state: State<'_, AppState>) -> TunnelStatus {
     state.tunnel.lock().unwrap().clone()
+}
+
+/// Actively test one upstream: resolve exit IP/geo and hit Anthropic's
+/// /v1/models, returning status + a body snippet so you can see the response.
+#[tauri::command]
+pub async fn test_upstream(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<TestResult, String> {
+    let up = {
+        let c = state.config.lock().unwrap();
+        c.upstreams.iter().find(|u| u.id == id).cloned()
+    };
+    let up = up.ok_or_else(|| "找不到该上游".to_string())?;
+    let client = client_for(&up).ok_or_else(|| "代理地址无效".to_string())?;
+
+    let mut res = TestResult {
+        ok: false,
+        upstream_label: up.label.clone(),
+        latency_ms: None,
+        exit_ip: None,
+        exit_geo: None,
+        anthropic_status: None,
+        body_snippet: None,
+        error: None,
+    };
+
+    let (ip, geo, lat, err) = probe_exit_ip(&client).await;
+    res.exit_ip = ip;
+    res.exit_geo = geo;
+    res.latency_ms = lat;
+    res.error = err;
+
+    match client
+        .get("https://api.anthropic.com/v1/models")
+        .timeout(std::time::Duration::from_secs(12))
+        .send()
+        .await
+    {
+        Ok(r) => {
+            res.anthropic_status = Some(r.status().as_u16());
+            if let Ok(t) = r.text().await {
+                res.body_snippet = Some(t.chars().take(400).collect());
+            }
+        }
+        Err(e) => {
+            let m = format!("Anthropic 请求失败: {}", e);
+            res.error = Some(match res.error.take() {
+                Some(p) => format!("{}; {}", p, m),
+                None => m,
+            });
+        }
+    }
+    res.ok = res.anthropic_status.is_some() || res.exit_ip.is_some();
+    Ok(res)
 }
 
 #[tauri::command]

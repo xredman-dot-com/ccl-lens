@@ -73,6 +73,17 @@ export interface RequestRecord {
   response_text?: string | null;
 }
 
+export interface TestResult {
+  ok: boolean;
+  upstream_label: string;
+  latency_ms: number | null;
+  exit_ip: string | null;
+  exit_geo: string | null;
+  anthropic_status: number | null;
+  body_snippet: string | null;
+  error: string | null;
+}
+
 export interface ModelStat {
   model: string;
   requests: number;

@@ -307,36 +307,112 @@ code {
   gap: 6px;
 }
 .upstream {
-  display: grid;
-  grid-template-columns: 12px 1fr auto auto;
-  align-items: center;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px;
   background: var(--bg-3);
   border: 1px solid var(--border);
   border-radius: 8px;
+  overflow: hidden;
 }
 .upstream.disabled {
-  opacity: 0.45;
+  opacity: 0.5;
 }
-.upstream-title {
+.up-row1 {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
-.upstream-url {
-  font-size: 11px;
-  word-break: break-all;
+.up-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
-.upstream-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+.up-latency {
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
-.upstream-actions {
+.up-url {
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.up-actions {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
+}
+.mini {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.mini:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.mini.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.mini.danger {
+  color: var(--red);
+}
+.mini:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.mode-desc {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+.warn-text {
+  color: var(--yellow);
+}
+.test-out {
+  margin-top: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--green);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 11px;
+}
+.test-out.bad {
+  border-left-color: var(--red);
+}
+.test-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+.test-line span:first-child {
+  color: var(--muted);
+}
+.test-err {
+  color: var(--red);
+  margin-top: 4px;
+  word-break: break-word;
+}
+.test-body {
+  margin: 6px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
 }
 .dot {
   width: 9px;

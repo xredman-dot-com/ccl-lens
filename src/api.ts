@@ -6,6 +6,7 @@ import type {
   Stats,
   SelectMode,
   TakeoverMode,
+  TestResult,
   TunnelStatus,
   UpstreamKind,
   Upstream,
@@ -17,6 +18,7 @@ export const api = {
   startIntercept: () => invoke<AppStateView>("start_intercept"),
   stopIntercept: () => invoke<AppStateView>("stop_intercept"),
   getTunnel: () => invoke<TunnelStatus>("get_tunnel"),
+  testUpstream: (id: string) => invoke<TestResult>("test_upstream", { id }),
   setTakeoverMode: (mode: TakeoverMode) =>
     invoke<AppStateView>("set_takeover_mode", { mode }),
   setMode: (mode: SelectMode) => invoke<AppStateView>("set_mode", { mode }),

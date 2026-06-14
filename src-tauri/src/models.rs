@@ -219,3 +219,16 @@ impl TunnelStatus {
         s
     }
 }
+
+/// Result of actively testing one upstream end-to-end.
+#[derive(Debug, Clone, Serialize)]
+pub struct TestResult {
+    pub ok: bool,
+    pub upstream_label: String,
+    pub latency_ms: Option<u64>,
+    pub exit_ip: Option<String>,
+    pub exit_geo: Option<String>,
+    pub anthropic_status: Option<u16>,
+    pub body_snippet: Option<String>,
+    pub error: Option<String>,
+}

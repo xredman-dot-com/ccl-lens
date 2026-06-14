@@ -77,6 +77,11 @@ pub async fn probe_exit_ip(
     }
 }
 
+/// Build a standalone client for a single upstream (used by the test command).
+pub fn client_for(up: &Upstream) -> Option<Client> {
+    build_client(up)
+}
+
 fn build_client(up: &Upstream) -> Option<Client> {
     let mut b = Client::builder()
         .connect_timeout(Duration::from_secs(15))

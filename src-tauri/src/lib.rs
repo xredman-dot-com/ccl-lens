@@ -40,6 +40,7 @@ pub fn run() {
             commands::start_intercept,
             commands::stop_intercept,
             commands::get_tunnel,
+            commands::test_upstream,
             commands::set_takeover_mode,
             commands::set_mode,
             commands::set_pinned,

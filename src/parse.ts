@@ -57,6 +57,12 @@ export function parseProxyInput(raw: string): ParsedProxy | null {
   };
 }
 
+/** Hide the password in a proxy url for display: socks5://u:pass@h:p -> socks5://u:***@h:p */
+export function maskUrl(url: string): string {
+  if (!url.trim()) return "直连";
+  return url.replace(/\/\/([^:@/]+):([^@/]+)@/, "//$1:***@");
+}
+
 function splitHostPort(hp: string): [string, string] {
   const i = hp.lastIndexOf(":");
   if (i < 0) return [hp, ""];

@@ -1,13 +1,13 @@
 import { useState } from "react";
-import type { AppStateView, SelectMode, UpstreamKind } from "../types";
+import type { AppStateView, SelectMode, TestResult, UpstreamKind } from "../types";
 import { api } from "../api";
 import { fmtMs } from "../format";
-import { parseProxyInput } from "../parse";
+import { parseProxyInput, maskUrl } from "../parse";
 
 const MODES: { value: SelectMode; label: string; hint: string }[] = [
-  { value: "fixed", label: "固定", hint: "永远用 pin 的节点，不切换" },
-  { value: "sticky", label: "粘性优先", hint: "优先 pin；挂了自动切，恢复切回" },
-  { value: "auto", label: "自动最快", hint: "始终选延迟最低的健康节点" },
+  { value: "fixed", label: "固定", hint: "始终用你固定(PIN)的通道，不自动切换。" },
+  { value: "sticky", label: "优先+兜底", hint: "优先用 PIN 的通道；它异常时自动切到健康通道，恢复后切回。" },
+  { value: "auto", label: "自动择优", hint: "按延迟自动选最快的健康通道。" },
 ];
 
 interface Props {
@@ -20,8 +20,15 @@ export function Upstreams({ state, onChange }: Props) {
   const [kind, setKind] = useState<UpstreamKind>("socks5");
   const [url, setUrl] = useState("");
   const [paste, setPaste] = useState("");
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testFor, setTestFor] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
 
   if (!state) return null;
+
+  const activeMode = MODES.find((m) => m.value === state.mode);
+  const needsPin =
+    (state.mode === "fixed" || state.mode === "sticky") && !state.pinned_id;
 
   const onPaste = (raw: string) => {
     setPaste(raw);
@@ -43,6 +50,28 @@ export function Upstreams({ state, onChange }: Props) {
     setPaste("");
   };
 
+  const runTest = async (id: string) => {
+    setTestingId(id);
+    setTestFor(id);
+    setTestResult(null);
+    try {
+      setTestResult(await api.testUpstream(id));
+    } catch (e) {
+      setTestResult({
+        ok: false,
+        upstream_label: "",
+        latency_ms: null,
+        exit_ip: null,
+        exit_geo: null,
+        anthropic_status: null,
+        body_snippet: null,
+        error: String(e),
+      });
+    } finally {
+      setTestingId(null);
+    }
+  };
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -52,64 +81,57 @@ export function Upstreams({ state, onChange }: Props) {
         </button>
       </div>
 
-      <div className="mode-row">
+      <div className="seg">
         {MODES.map((m) => (
           <button
             key={m.value}
-            title={m.hint}
-            className={"chip" + (state.mode === m.value ? " chip-on" : "")}
+            className={"seg-btn" + (state.mode === m.value ? " on" : "")}
             onClick={() => api.setMode(m.value).then(onChange)}
           >
             {m.label}
           </button>
         ))}
       </div>
+      <p className="mode-desc muted small">
+        {activeMode?.hint}
+        {needsPin && <span className="warn-text"> 请点某个通道的「固定」来选定。</span>}
+      </p>
 
       <ul className="upstream-list">
         {state.upstreams.map(({ upstream: u, health: h }) => {
           const pinned = state.pinned_id === u.id;
           return (
             <li key={u.id} className={"upstream" + (u.enabled ? "" : " disabled")}>
-              <span className={"dot dot-" + h.state} title={h.last_error ?? h.state} />
-              <div className="upstream-main">
-                <div className="upstream-title">
-                  <strong>{u.label}</strong>
-                  <span className="tag">{u.kind}</span>
-                  {pinned && <span className="tag tag-pin">PIN</span>}
-                </div>
-                <div className="muted upstream-url">{u.url || "(直连)"}</div>
+              <div className="up-row1">
+                <span className={"dot dot-" + h.state} title={h.last_error ?? h.state} />
+                <strong className="up-label">{u.label}</strong>
+                <span className="tag">{u.kind}</span>
+                {pinned && <span className="tag tag-pin">固定</span>}
+                <span className="grow" />
+                <span className="up-latency">{fmtMs(h.latency_ms)}</span>
               </div>
-              <div className="upstream-meta">
-                <span>{fmtMs(h.latency_ms)}</span>
+              {u.url && <div className="up-url muted">{maskUrl(u.url)}</div>}
+              <div className="up-actions">
                 <span className="muted small">
                   {h.success}/{h.success + h.failure}
                 </span>
-              </div>
-              <div className="upstream-actions">
-                <button
-                  className={"icon-btn" + (pinned ? " on" : "")}
-                  title="设为优先"
-                  onClick={() => api.setPinned(pinned ? null : u.id).then(onChange)}
-                >
-                  ◎
+                <span className="grow" />
+                <button className={"mini" + (pinned ? " on" : "")} onClick={() => api.setPinned(pinned ? null : u.id).then(onChange)}>
+                  {pinned ? "取消固定" : "固定"}
                 </button>
-                <button
-                  className="icon-btn"
-                  title={u.enabled ? "停用" : "启用"}
-                  onClick={() => api.setUpstreamEnabled(u.id, !u.enabled).then(onChange)}
-                >
-                  {u.enabled ? "‖" : "▶"}
+                <button className="mini" disabled={testingId === u.id} onClick={() => runTest(u.id)}>
+                  {testingId === u.id ? "测试中…" : "测试"}
+                </button>
+                <button className="mini" onClick={() => api.setUpstreamEnabled(u.id, !u.enabled).then(onChange)}>
+                  {u.enabled ? "停用" : "启用"}
                 </button>
                 {u.kind !== "direct" && (
-                  <button
-                    className="icon-btn danger"
-                    title="删除"
-                    onClick={() => api.removeUpstream(u.id).then(onChange)}
-                  >
-                    ✕
+                  <button className="mini danger" onClick={() => api.removeUpstream(u.id).then(onChange)}>
+                    删除
                   </button>
                 )}
               </div>
+              {testFor === u.id && testResult && <TestView r={testResult} />}
             </li>
           );
         })}
@@ -122,11 +144,7 @@ export function Upstreams({ state, onChange }: Props) {
         onChange={(e) => onPaste(e.target.value)}
       />
       <div className="add-form">
-        <input
-          placeholder="名称"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-        />
+        <input placeholder="名称" value={label} onChange={(e) => setLabel(e.target.value)} />
         <select value={kind} onChange={(e) => setKind(e.target.value as UpstreamKind)}>
           <option value="socks5">socks5</option>
           <option value="http">http</option>
@@ -143,5 +161,26 @@ export function Upstreams({ state, onChange }: Props) {
         </button>
       </div>
     </section>
+  );
+}
+
+function TestView({ r }: { r: TestResult }) {
+  return (
+    <div className={"test-out" + (r.ok ? "" : " bad")}>
+      <div className="test-line">
+        <span>出口 IP</span>
+        <span>{r.exit_ip ? `${r.exit_ip}${r.exit_geo ? ` (${r.exit_geo})` : ""}` : "—"}</span>
+      </div>
+      <div className="test-line">
+        <span>延迟</span>
+        <span>{fmtMs(r.latency_ms)}</span>
+      </div>
+      <div className="test-line">
+        <span>Anthropic</span>
+        <span>{r.anthropic_status ?? "—"}</span>
+      </div>
+      {r.error && <div className="test-err">{r.error}</div>}
+      {r.body_snippet && <pre className="test-body">{r.body_snippet}</pre>}
+    </div>
   );
 }

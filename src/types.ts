@@ -1,6 +1,22 @@
 export type UpstreamKind = "direct" | "socks5" | "http";
 export type HealthState = "unknown" | "up" | "down";
 export type SelectMode = "fixed" | "sticky" | "auto";
+export type TakeoverMode = "config" | "env" | "test";
+
+export interface TunnelStatus {
+  running: boolean;
+  port: number;
+  proxy_state: string;
+  takeover_mode: TakeoverMode;
+  tunnel_ok: boolean;
+  tunnel_latency_ms: number | null;
+  upstream_label: string | null;
+  upstream_kind: string | null;
+  upstream_endpoint: string | null;
+  exit_ip: string | null;
+  exit_geo: string | null;
+  error: string | null;
+}
 
 export interface Upstream {
   id: string;
@@ -30,6 +46,7 @@ export interface AppStateView {
   mode: SelectMode;
   pinned_id: string | null;
   claude_base_url: string | null;
+  takeover_mode: TakeoverMode;
   upstreams: UpstreamView[];
 }
 

@@ -1,8 +1,11 @@
-use crate::models::{Health, RequestRecord, SelectMode, Stats, Upstream, UpstreamKind};
+use crate::models::{
+    kind_str, Health, RequestRecord, SelectMode, Stats, TakeoverMode, TunnelStatus, Upstream,
+    UpstreamKind,
+};
 use crate::state::AppState;
-use crate::upstream::Pool;
+use crate::upstream::{endpoint_of, probe_exit_ip, Pool};
 use serde::Serialize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
 #[derive(Serialize, Clone)]
@@ -18,6 +21,7 @@ pub struct AppStateView {
     pub mode: SelectMode,
     pub pinned_id: Option<String>,
     pub claude_base_url: Option<String>,
+    pub takeover_mode: TakeoverMode,
     pub upstreams: Vec<UpstreamView>,
 }
 
@@ -36,8 +40,49 @@ fn build_view(state: &AppState) -> AppStateView {
         mode: cfg.mode,
         pinned_id: cfg.pinned_id,
         claude_base_url: crate::claude::current_base_url(),
+        takeover_mode: cfg.takeover_mode,
         upstreams: health_view(&state.pool),
     }
+}
+
+/// Probe the active tunnel (exit IP + geo + latency) and broadcast it.
+/// No-op when the proxy isn't running.
+pub async fn update_tunnel(
+    app: AppHandle,
+    pool: Arc<Pool>,
+    tunnel: Arc<Mutex<TunnelStatus>>,
+) {
+    let (running, port, mode) = {
+        let t = tunnel.lock().unwrap();
+        (t.running, t.port, t.takeover_mode.clone())
+    };
+    if !running {
+        return;
+    }
+    let mut ts = TunnelStatus::ready(port, mode);
+    match pool.select() {
+        Some(sel) => {
+            ts.upstream_label = Some(sel.label.clone());
+            ts.upstream_kind = Some(kind_str(&sel.kind));
+            ts.upstream_endpoint = Some(endpoint_of(&sel.url));
+            let (ip, geo, lat, err) = probe_exit_ip(&sel.client).await;
+            ts.tunnel_ok = ip.is_some();
+            ts.exit_ip = ip;
+            ts.exit_geo = geo;
+            ts.tunnel_latency_ms = lat;
+            ts.error = err;
+        }
+        None => {
+            ts.error = Some("无可用上游".to_string());
+        }
+    }
+    *tunnel.lock().unwrap() = ts.clone();
+    let _ = app.emit("tunnel", ts);
+}
+
+fn emit_tunnel_now(app: &AppHandle, tunnel: &Arc<Mutex<TunnelStatus>>) {
+    let snap = tunnel.lock().unwrap().clone();
+    let _ = app.emit("tunnel", snap);
 }
 
 fn spawn_probe(app: AppHandle, pool: Arc<Pool>) {
@@ -57,7 +102,10 @@ pub async fn start_intercept(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppStateView, String> {
-    let port = state.config.lock().unwrap().port;
+    let (port, mode) = {
+        let c = state.config.lock().unwrap();
+        (c.port, c.takeover_mode.clone())
+    };
     if !state.is_running() {
         let handle = crate::proxy::start(
             state.pool.clone(),
@@ -69,18 +117,46 @@ pub async fn start_intercept(
         .map_err(|e| format!("启动监听失败 (端口 {}): {}", port, e))?;
         *state.proxy.lock().unwrap() = Some(handle);
     }
-    crate::claude::enable_intercept(port).map_err(|e| e.to_string())?;
+    // Only the Config mode touches ~/.claude/settings.json.
+    if mode == TakeoverMode::Config {
+        crate::claude::enable_intercept(port).map_err(|e| e.to_string())?;
+    }
+
+    *state.tunnel.lock().unwrap() = TunnelStatus::ready(port, mode);
+    emit_tunnel_now(&app, &state.tunnel);
+
+    // Probe the tunnel (exit IP + geo) and upstream health asynchronously.
+    let (a, p, t) = (app.clone(), state.pool.clone(), state.tunnel.clone());
+    tokio::spawn(async move { update_tunnel(a, p, t).await });
     spawn_probe(app, state.pool.clone());
     Ok(build_view(&state))
 }
 
 #[tauri::command]
-pub fn stop_intercept(state: State<'_, AppState>) -> Result<AppStateView, String> {
+pub fn stop_intercept(app: AppHandle, state: State<'_, AppState>) -> Result<AppStateView, String> {
+    let mode = state.tunnel.lock().unwrap().takeover_mode.clone();
     if let Some(h) = state.proxy.lock().unwrap().take() {
         h.stop();
     }
-    crate::claude::disable_intercept().map_err(|e| e.to_string())?;
+    if mode == TakeoverMode::Config {
+        crate::claude::disable_intercept().map_err(|e| e.to_string())?;
+    }
+    let port = state.config.lock().unwrap().port;
+    *state.tunnel.lock().unwrap() = TunnelStatus::stopped(port);
+    emit_tunnel_now(&app, &state.tunnel);
     Ok(build_view(&state))
+}
+
+#[tauri::command]
+pub fn get_tunnel(state: State<'_, AppState>) -> TunnelStatus {
+    state.tunnel.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn set_takeover_mode(state: State<'_, AppState>, mode: TakeoverMode) -> AppStateView {
+    state.config.lock().unwrap().takeover_mode = mode;
+    state.sync_pool_and_save();
+    build_view(&state)
 }
 
 #[tauri::command]

@@ -206,6 +206,97 @@ code {
   background: rgba(91, 140, 255, 0.12);
 }
 
+/* Connection panel */
+.conn {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+.conn-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.conn-status .dot[data-off="true"] {
+  background: var(--muted);
+}
+.seg {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.seg-btn {
+  flex: 1;
+  background: var(--bg);
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  padding: 7px 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.seg-btn:last-child {
+  border-right: none;
+}
+.seg-btn.on {
+  background: rgba(91, 140, 255, 0.16);
+  color: var(--text);
+}
+.seg-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.conn-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+.conn-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 10px;
+  font-size: 13px;
+}
+.conn-row .bad {
+  color: var(--red);
+}
+.env-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+.env-hint code {
+  color: var(--accent);
+  word-break: break-all;
+}
+.btn.wide {
+  width: 100%;
+}
+.paste-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  margin-bottom: 6px;
+}
+
 /* Upstream list */
 .upstream-list {
   list-style: none;

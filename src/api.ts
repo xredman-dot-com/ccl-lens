@@ -5,6 +5,8 @@ import type {
   RequestRecord,
   Stats,
   SelectMode,
+  TakeoverMode,
+  TunnelStatus,
   UpstreamKind,
   Upstream,
   UpstreamView,
@@ -14,6 +16,9 @@ export const api = {
   getState: () => invoke<AppStateView>("get_state"),
   startIntercept: () => invoke<AppStateView>("start_intercept"),
   stopIntercept: () => invoke<AppStateView>("stop_intercept"),
+  getTunnel: () => invoke<TunnelStatus>("get_tunnel"),
+  setTakeoverMode: (mode: TakeoverMode) =>
+    invoke<AppStateView>("set_takeover_mode", { mode }),
   setMode: (mode: SelectMode) => invoke<AppStateView>("set_mode", { mode }),
   setPinned: (id: string | null) => invoke<AppStateView>("set_pinned", { id }),
   addUpstream: (label: string, kind: UpstreamKind, url: string) =>
@@ -37,4 +42,8 @@ export function onRequest(cb: (r: RequestRecord) => void): Promise<UnlistenFn> {
 
 export function onHealth(cb: (u: UpstreamView[]) => void): Promise<UnlistenFn> {
   return listen<UpstreamView[]>("health", (e) => cb(e.payload));
+}
+
+export function onTunnel(cb: (t: TunnelStatus) => void): Promise<UnlistenFn> {
+  return listen<TunnelStatus>("tunnel", (e) => cb(e.payload));
 }

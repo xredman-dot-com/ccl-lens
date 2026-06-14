@@ -149,3 +149,73 @@ pub struct Stats {
     pub errors: u64,
     pub by_model: Vec<ModelStat>,
 }
+
+/// How ccl-lens routes Claude Code through the proxy.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TakeoverMode {
+    /// Patch ~/.claude/settings.json env.ANTHROPIC_BASE_URL (auto-routes CC).
+    Config,
+    /// Don't touch config; user exports ANTHROPIC_BASE_URL themselves.
+    Env,
+    /// Don't touch config; only bind the port and verify the upstream tunnel.
+    Test,
+}
+
+impl Default for TakeoverMode {
+    fn default() -> Self {
+        TakeoverMode::Config
+    }
+}
+
+pub fn kind_str(k: &UpstreamKind) -> String {
+    match k {
+        UpstreamKind::Direct => "direct",
+        UpstreamKind::Socks5 => "socks5",
+        UpstreamKind::Http => "http",
+    }
+    .to_string()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TunnelStatus {
+    pub running: bool,
+    pub port: u16,
+    pub proxy_state: String,
+    pub takeover_mode: TakeoverMode,
+    pub tunnel_ok: bool,
+    pub tunnel_latency_ms: Option<u64>,
+    pub upstream_label: Option<String>,
+    pub upstream_kind: Option<String>,
+    pub upstream_endpoint: Option<String>,
+    pub exit_ip: Option<String>,
+    pub exit_geo: Option<String>,
+    pub error: Option<String>,
+}
+
+impl TunnelStatus {
+    pub fn stopped(port: u16) -> Self {
+        TunnelStatus {
+            running: false,
+            port,
+            proxy_state: "Stopped".to_string(),
+            takeover_mode: TakeoverMode::Config,
+            tunnel_ok: false,
+            tunnel_latency_ms: None,
+            upstream_label: None,
+            upstream_kind: None,
+            upstream_endpoint: None,
+            exit_ip: None,
+            exit_geo: None,
+            error: None,
+        }
+    }
+
+    pub fn ready(port: u16, mode: TakeoverMode) -> Self {
+        let mut s = Self::stopped(port);
+        s.running = true;
+        s.proxy_state = "ProxyReady".to_string();
+        s.takeover_mode = mode;
+        s
+    }
+}

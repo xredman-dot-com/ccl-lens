@@ -23,11 +23,13 @@ pub fn run() {
             let handle = app.handle().clone();
             let state = app.state::<AppState>();
             let pool = state.pool.clone();
+            let tunnel = state.tunnel.clone();
             let interval = state.config.lock().unwrap().health_interval_secs.max(5);
             tauri::async_runtime::spawn(async move {
                 loop {
                     pool.probe_all().await;
                     let _ = handle.emit("health", commands::health_view(&pool));
+                    commands::update_tunnel(handle.clone(), pool.clone(), tunnel.clone()).await;
                     tokio::time::sleep(Duration::from_secs(interval)).await;
                 }
             });
@@ -37,6 +39,8 @@ pub fn run() {
             commands::get_state,
             commands::start_intercept,
             commands::stop_intercept,
+            commands::get_tunnel,
+            commands::set_takeover_mode,
             commands::set_mode,
             commands::set_pinned,
             commands::add_upstream,

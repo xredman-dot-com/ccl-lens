@@ -1,5 +1,6 @@
 use crate::models::{now_ms, Health, HealthState, SelectMode, Upstream, UpstreamKind};
 use reqwest::Client;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -23,7 +24,57 @@ pub struct Pool {
 pub struct Selection {
     pub id: String,
     pub label: String,
+    pub kind: UpstreamKind,
+    pub url: String,
     pub client: Client,
+}
+
+/// host:port from an upstream url, stripping scheme and auth (hide password).
+pub fn endpoint_of(url: &str) -> String {
+    if url.trim().is_empty() {
+        return "direct".to_string();
+    }
+    let no_scheme = url.split("://").nth(1).unwrap_or(url);
+    let after_auth = no_scheme.rsplit('@').next().unwrap_or(no_scheme);
+    after_auth.split('/').next().unwrap_or(after_auth).to_string()
+}
+
+/// Query the exit IP + geo through a given client.
+/// Returns (ip, "City, CC", latency_ms, error).
+pub async fn probe_exit_ip(
+    client: &Client,
+) -> (Option<String>, Option<String>, Option<u64>, Option<String>) {
+    let start = Instant::now();
+    match client
+        .get("https://ipinfo.io/json")
+        .timeout(Duration::from_secs(12))
+        .send()
+        .await
+    {
+        Ok(r) => {
+            let latency = start.elapsed().as_millis() as u64;
+            match r.text().await {
+                Ok(t) => {
+                    if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                        let ip = v.get("ip").and_then(|x| x.as_str()).map(String::from);
+                        let city = v.get("city").and_then(|x| x.as_str()).unwrap_or("");
+                        let country = v.get("country").and_then(|x| x.as_str()).unwrap_or("");
+                        let geo = match (city.is_empty(), country.is_empty()) {
+                            (true, true) => None,
+                            (true, false) => Some(country.to_string()),
+                            (false, true) => Some(city.to_string()),
+                            (false, false) => Some(format!("{}, {}", city, country)),
+                        };
+                        (ip, geo, Some(latency), None)
+                    } else {
+                        (None, None, Some(latency), Some("解析出口信息失败".to_string()))
+                    }
+                }
+                Err(e) => (None, None, Some(latency), Some(short_err(&e))),
+            }
+        }
+        Err(e) => (None, None, None, Some(short_err(&e))),
+    }
 }
 
 fn build_client(up: &Upstream) -> Option<Client> {
@@ -147,6 +198,8 @@ impl Pool {
             inner.clients.get(&u.id).map(|c| Selection {
                 id: u.id.clone(),
                 label: u.label.clone(),
+                kind: u.kind.clone(),
+                url: u.url.clone(),
                 client: c.clone(),
             })
         })
@@ -206,6 +259,19 @@ impl Pool {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::endpoint_of;
+
+    #[test]
+    fn endpoint_hides_auth() {
+        assert_eq!(endpoint_of("socks5://u:secret@1.2.3.4:1080"), "1.2.3.4:1080");
+        assert_eq!(endpoint_of("http://10.0.0.1:8888"), "10.0.0.1:8888");
+        assert_eq!(endpoint_of("socks5://h:p@host:5782/path"), "host:5782");
+        assert_eq!(endpoint_of(""), "direct");
     }
 }
 

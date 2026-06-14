@@ -1,4 +1,4 @@
-use crate::models::{SelectMode, Upstream};
+use crate::models::{SelectMode, TakeoverMode, TunnelStatus, Upstream};
 use crate::proxy::ProxyHandle;
 use crate::store::Store;
 use crate::upstream::Pool;
@@ -30,6 +30,8 @@ pub struct AppConfig {
     pub pinned_id: Option<String>,
     pub upstreams: Vec<Upstream>,
     pub health_interval_secs: u64,
+    #[serde(default)]
+    pub takeover_mode: TakeoverMode,
 }
 
 impl Default for AppConfig {
@@ -46,6 +48,7 @@ impl Default for AppConfig {
                 enabled: true,
             }],
             health_interval_secs: 20,
+            takeover_mode: TakeoverMode::Config,
         }
     }
 }
@@ -75,6 +78,7 @@ pub struct AppState {
     pub pool: Arc<Pool>,
     pub store: Arc<Store>,
     pub proxy: Mutex<Option<ProxyHandle>>,
+    pub tunnel: Arc<Mutex<TunnelStatus>>,
 }
 
 impl AppState {
@@ -86,11 +90,13 @@ impl AppState {
             config.pinned_id.clone(),
         ));
         let store = Arc::new(Store::open(&db_path())?);
+        let tunnel = Arc::new(Mutex::new(TunnelStatus::stopped(config.port)));
         Ok(AppState {
             config: Mutex::new(config),
             pool,
             store,
             proxy: Mutex::new(None),
+            tunnel,
         })
     }
 

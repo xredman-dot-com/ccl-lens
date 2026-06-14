@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { AppStateView, RequestRecord, Stats } from "./types";
-import { api, onHealth, onRequest } from "./api";
+import type { AppStateView, RequestRecord, Stats, TakeoverMode, TunnelStatus } from "./types";
+import { api, onHealth, onRequest, onTunnel } from "./api";
 import { Header } from "./components/Header";
+import { Connection } from "./components/Connection";
 import { Upstreams } from "./components/Upstreams";
 import { Timeline } from "./components/Timeline";
 import { StatsPanel } from "./components/Stats";
@@ -11,6 +12,7 @@ const MAX_ROWS = 500;
 
 export default function App() {
   const [state, setState] = useState<AppStateView | null>(null);
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [tab, setTab] = useState<"timeline" | "stats">("timeline");
@@ -29,6 +31,7 @@ export default function App() {
 
   useEffect(() => {
     api.getState().then(setState);
+    api.getTunnel().then(setTunnel);
     api.listRequests(MAX_ROWS, 0).then(setRequests);
     api.getStats().then(setStats);
 
@@ -39,11 +42,17 @@ export default function App() {
     const unHealth = onHealth((ups) => {
       setState((prev) => (prev ? { ...prev, upstreams: ups } : prev));
     });
+    const unTunnel = onTunnel(setTunnel);
     return () => {
       unReq.then((f) => f());
       unHealth.then((f) => f());
+      unTunnel.then((f) => f());
     };
   }, []);
+
+  const setTakeover = async (m: TakeoverMode) => {
+    setState(await api.setTakeoverMode(m));
+  };
 
   const toggle = async () => {
     setBusy(true);
@@ -66,10 +75,18 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header state={state} busy={busy} error={error} onToggle={toggle} />
+      <Header state={state} tunnel={tunnel} />
 
       <div className="layout">
         <div className="sidebar">
+          <Connection
+            state={state}
+            tunnel={tunnel}
+            busy={busy}
+            error={error}
+            onToggle={toggle}
+            onSetMode={setTakeover}
+          />
           <Upstreams state={state} onChange={setState} />
         </div>
 

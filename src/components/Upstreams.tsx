@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AppStateView, SelectMode, UpstreamKind } from "../types";
 import { api } from "../api";
 import { fmtMs } from "../format";
+import { parseProxyInput } from "../parse";
 
 const MODES: { value: SelectMode; label: string; hint: string }[] = [
   { value: "fixed", label: "固定", hint: "永远用 pin 的节点，不切换" },
@@ -18,15 +19,28 @@ export function Upstreams({ state, onChange }: Props) {
   const [label, setLabel] = useState("");
   const [kind, setKind] = useState<UpstreamKind>("socks5");
   const [url, setUrl] = useState("");
+  const [paste, setPaste] = useState("");
 
   if (!state) return null;
 
+  const onPaste = (raw: string) => {
+    setPaste(raw);
+    const p = parseProxyInput(raw);
+    if (p) {
+      setKind(p.kind);
+      setUrl(p.url);
+      if (!label.trim()) setLabel(p.label);
+    }
+  };
+
   const add = async () => {
-    if (!label.trim()) return;
-    const s = await api.addUpstream(label.trim(), kind, url.trim());
+    const name = label.trim() || (paste.trim() ? parseProxyInput(paste)?.label ?? "" : "");
+    if (!name) return;
+    const s = await api.addUpstream(name, kind, url.trim());
     onChange(s);
     setLabel("");
     setUrl("");
+    setPaste("");
   };
 
   return (
@@ -101,6 +115,12 @@ export function Upstreams({ state, onChange }: Props) {
         })}
       </ul>
 
+      <input
+        className="paste-input"
+        placeholder="快捷粘贴  host:port:user:pass"
+        value={paste}
+        onChange={(e) => onPaste(e.target.value)}
+      />
       <div className="add-form">
         <input
           placeholder="名称"

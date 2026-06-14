@@ -4,6 +4,7 @@ import { api, onHealth, onRequest, onTunnel } from "./api";
 import { Header } from "./components/Header";
 import { Connection } from "./components/Connection";
 import { Upstreams } from "./components/Upstreams";
+import { Settings } from "./components/Settings";
 import { Timeline } from "./components/Timeline";
 import { StatsPanel } from "./components/Stats";
 import { RequestDetail } from "./components/RequestDetail";
@@ -88,6 +89,7 @@ export default function App() {
             onSetMode={setTakeover}
           />
           <Upstreams state={state} onChange={setState} />
+          <Settings />
         </div>
 
         <main className="content">

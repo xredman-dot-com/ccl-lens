@@ -79,8 +79,11 @@ export interface TestResult {
   latency_ms: number | null;
   exit_ip: string | null;
   exit_geo: string | null;
-  anthropic_status: number | null;
-  body_snippet: string | null;
+  exit_org: string | null;
+  status_reachable: boolean;
+  status_latency_ms: number | null;
+  status_indicator: string | null;
+  status_desc: string | null;
   error: string | null;
 }
 

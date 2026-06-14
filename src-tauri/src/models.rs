@@ -220,15 +220,20 @@ impl TunnelStatus {
     }
 }
 
-/// Result of actively testing one upstream end-to-end.
+/// Result of actively testing one upstream's tunnel (not the Claude API).
 #[derive(Debug, Clone, Serialize)]
 pub struct TestResult {
     pub ok: bool,
     pub upstream_label: String,
+    /// exit-IP lookup latency (tunnel round trip)
     pub latency_ms: Option<u64>,
     pub exit_ip: Option<String>,
     pub exit_geo: Option<String>,
-    pub anthropic_status: Option<u16>,
-    pub body_snippet: Option<String>,
+    pub exit_org: Option<String>,
+    /// status.anthropic.com reachability
+    pub status_reachable: bool,
+    pub status_latency_ms: Option<u64>,
+    pub status_indicator: Option<String>,
+    pub status_desc: Option<String>,
     pub error: Option<String>,
 }

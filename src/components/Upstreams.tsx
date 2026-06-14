@@ -63,8 +63,11 @@ export function Upstreams({ state, onChange }: Props) {
         latency_ms: null,
         exit_ip: null,
         exit_geo: null,
-        anthropic_status: null,
-        body_snippet: null,
+        exit_org: null,
+        status_reachable: false,
+        status_latency_ms: null,
+        status_indicator: null,
+        status_desc: null,
         error: String(e),
       });
     } finally {
@@ -171,16 +174,31 @@ function TestView({ r }: { r: TestResult }) {
         <span>出口 IP</span>
         <span>{r.exit_ip ? `${r.exit_ip}${r.exit_geo ? ` (${r.exit_geo})` : ""}` : "—"}</span>
       </div>
+      {r.exit_org && (
+        <div className="test-line">
+          <span>归属</span>
+          <span>{r.exit_org}</span>
+        </div>
+      )}
       <div className="test-line">
-        <span>延迟</span>
+        <span>隧道延迟</span>
         <span>{fmtMs(r.latency_ms)}</span>
       </div>
       <div className="test-line">
-        <span>Anthropic</span>
-        <span>{r.anthropic_status ?? "—"}</span>
+        <span>Anthropic 状态页</span>
+        <span className={r.status_reachable ? "" : "bad"}>
+          {r.status_reachable
+            ? `可达${r.status_latency_ms != null ? ` (${fmtMs(r.status_latency_ms)})` : ""}`
+            : "不可达"}
+        </span>
       </div>
+      {r.status_desc && (
+        <div className="test-line">
+          <span>系统状态</span>
+          <span>{r.status_desc}</span>
+        </div>
+      )}
       {r.error && <div className="test-err">{r.error}</div>}
-      {r.body_snippet && <pre className="test-body">{r.body_snippet}</pre>}
     </div>
   );
 }

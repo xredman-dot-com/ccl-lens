@@ -5,7 +5,9 @@ use crate::models::{
 use crate::state::AppState;
 use crate::upstream::{client_for, endpoint_of, probe_exit_ip, Pool};
 use serde::Serialize;
+use serde_json::Value;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 
 #[derive(Serialize, Clone)]
@@ -174,38 +176,81 @@ pub async fn test_upstream(
         latency_ms: None,
         exit_ip: None,
         exit_geo: None,
-        anthropic_status: None,
-        body_snippet: None,
+        exit_org: None,
+        status_reachable: false,
+        status_latency_ms: None,
+        status_indicator: None,
+        status_desc: None,
         error: None,
     };
 
-    let (ip, geo, lat, err) = probe_exit_ip(&client).await;
-    res.exit_ip = ip;
-    res.exit_geo = geo;
-    res.latency_ms = lat;
-    res.error = err;
+    let push_err = |res: &mut TestResult, m: String| {
+        res.error = Some(match res.error.take() {
+            Some(p) => format!("{}; {}", p, m),
+            None => m,
+        });
+    };
 
+    // 1) 出口 IP 详情（ipinfo.io）
+    let t0 = Instant::now();
     match client
-        .get("https://api.anthropic.com/v1/models")
-        .timeout(std::time::Duration::from_secs(12))
+        .get("https://ipinfo.io/json")
+        .timeout(Duration::from_secs(10))
         .send()
         .await
     {
         Ok(r) => {
-            res.anthropic_status = Some(r.status().as_u16());
-            if let Ok(t) = r.text().await {
-                res.body_snippet = Some(t.chars().take(400).collect());
+            res.latency_ms = Some(t0.elapsed().as_millis() as u64);
+            if let Ok(txt) = r.text().await {
+                if let Ok(v) = serde_json::from_str::<Value>(&txt) {
+                    res.exit_ip = v.get("ip").and_then(|x| x.as_str()).map(String::from);
+                    let city = v.get("city").and_then(|x| x.as_str()).unwrap_or("");
+                    let region = v.get("region").and_then(|x| x.as_str()).unwrap_or("");
+                    let country = v.get("country").and_then(|x| x.as_str()).unwrap_or("");
+                    let parts: Vec<&str> = [city, region, country]
+                        .into_iter()
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if !parts.is_empty() {
+                        res.exit_geo = Some(parts.join(", "));
+                    }
+                    res.exit_org = v.get("org").and_then(|x| x.as_str()).map(String::from);
+                }
             }
         }
-        Err(e) => {
-            let m = format!("Anthropic 请求失败: {}", e);
-            res.error = Some(match res.error.take() {
-                Some(p) => format!("{}; {}", p, m),
-                None => m,
-            });
-        }
+        Err(e) => push_err(&mut res, format!("出口 IP 查询失败: {}", e)),
     }
-    res.ok = res.anthropic_status.is_some() || res.exit_ip.is_some();
+
+    // 2) Claude 状态页（验证可达性，非 API、无需鉴权；status.anthropic.com 会跳到这里）
+    let t1 = Instant::now();
+    match client
+        .get("https://status.claude.com/api/v2/status.json")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(r) => {
+            res.status_reachable = r.status().is_success();
+            res.status_latency_ms = Some(t1.elapsed().as_millis() as u64);
+            if let Ok(txt) = r.text().await {
+                if let Ok(v) = serde_json::from_str::<Value>(&txt) {
+                    res.status_indicator = v
+                        .get("status")
+                        .and_then(|s| s.get("indicator"))
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                    res.status_desc = v
+                        .get("status")
+                        .and_then(|s| s.get("description"))
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                }
+            }
+        }
+        Err(e) => push_err(&mut res, format!("状态页请求失败: {}", e)),
+    }
+
+    res.ok = res.exit_ip.is_some() || res.status_reachable;
     Ok(res)
 }
 

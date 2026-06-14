@@ -15,18 +15,48 @@ set -euo pipefail
 cd "$(dirname "$0")"
 shopt -s nullglob
 
-for bin in pnpm cargo; do
-  command -v "$bin" >/dev/null 2>&1 || { echo "✗ 未找到 $bin，请先安装"; exit 1; }
-done
+usage() {
+  cat <<'EOF'
+ccl-lens 打包脚本
 
-# 解析参数：抽出 --dmg，其余透传
+用法:
+  ./build.sh [选项] [-- <透传给 pnpm tauri build 的参数>]
+
+选项:
+  (无)            打 .app（x86_64 原生 release，最稳）
+  --dmg           同时出 .dmg（CI=true 跳过 Finder/AppleScript，避开常见崩溃）
+  --debug         出未压缩的 debug 包，构建更快
+  -h, --help      显示本帮助并退出
+
+示例:
+  ./build.sh
+  ./build.sh --dmg
+  ./build.sh --target universal-apple-darwin   # 需先装 rustup 并加 aarch64 target
+
+产物:
+  src-tauri/target/release/bundle/{macos/*.app, dmg/*.dmg}
+
+说明:
+  - 未做 Developer ID 签名，首次打开会被 Gatekeeper 拦；
+    右键 → 打开，或: xattr -dr com.apple.quarantine <app>
+  - 通用包(Intel+M2): rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    然后 ./build.sh --target universal-apple-darwin
+EOF
+}
+
+# 解析参数：抽出 --help / --dmg，其余透传
 WANT_DMG=0
 PASS=()
 for a in "$@"; do
   case "$a" in
+    -h|--help) usage; exit 0 ;;
     --dmg) WANT_DMG=1 ;;
     *) PASS+=("$a") ;;
   esac
+done
+
+for bin in pnpm cargo; do
+  command -v "$bin" >/dev/null 2>&1 || { echo "✗ 未找到 $bin，请先安装"; exit 1; }
 done
 
 # 清理上次失败残留的临时挂载卷（否则 dmg 会反复失败）

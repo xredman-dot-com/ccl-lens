@@ -1,0 +1,235 @@
+use crate::models::{ModelStat, RequestRecord, Stats};
+use anyhow::Result;
+use rusqlite::{params, Connection};
+use std::sync::Mutex;
+
+pub struct Store {
+    conn: Mutex<Connection>,
+}
+
+impl Store {
+    pub fn open(path: &std::path::Path) -> Result<Self> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).ok();
+        }
+        let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS requests (
+                id TEXT PRIMARY KEY,
+                ts INTEGER NOT NULL,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL,
+                model TEXT,
+                status INTEGER,
+                upstream_id TEXT,
+                upstream_label TEXT,
+                ttfb_ms INTEGER,
+                duration_ms INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_creation_tokens INTEGER,
+                cost_usd REAL,
+                stop_reason TEXT,
+                error TEXT,
+                stream INTEGER NOT NULL DEFAULT 0,
+                request_body TEXT,
+                response_text TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts DESC);",
+        )?;
+        Ok(Store {
+            conn: Mutex::new(conn),
+        })
+    }
+
+    pub fn insert(&self, r: &RequestRecord) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO requests (
+                id, ts, method, path, model, status, upstream_id, upstream_label,
+                ttfb_ms, duration_ms, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, cost_usd, stop_reason,
+                error, stream, request_body, response_text
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                ?16, ?17, ?18, ?19, ?20
+            )",
+            params![
+                r.id,
+                r.ts,
+                r.method,
+                r.path,
+                r.model,
+                r.status.map(|s| s as i64),
+                r.upstream_id,
+                r.upstream_label,
+                r.ttfb_ms.map(|v| v as i64),
+                r.duration_ms.map(|v| v as i64),
+                r.input_tokens.map(|v| v as i64),
+                r.output_tokens.map(|v| v as i64),
+                r.cache_read_tokens.map(|v| v as i64),
+                r.cache_creation_tokens.map(|v| v as i64),
+                r.cost_usd,
+                r.stop_reason,
+                r.error,
+                r.stream as i64,
+                r.request_body,
+                r.response_text,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list(&self, limit: i64, offset: i64) -> Result<Vec<RequestRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, ts, method, path, model, status, upstream_id, upstream_label,
+                    ttfb_ms, duration_ms, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, cost_usd, stop_reason,
+                    error, stream
+             FROM requests ORDER BY ts DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(params![limit, offset], |row| {
+            Ok(RequestRecord {
+                id: row.get(0)?,
+                ts: row.get(1)?,
+                method: row.get(2)?,
+                path: row.get(3)?,
+                model: row.get(4)?,
+                status: row.get::<_, Option<i64>>(5)?.map(|v| v as u16),
+                upstream_id: row.get(6)?,
+                upstream_label: row.get(7)?,
+                ttfb_ms: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+                duration_ms: row.get::<_, Option<i64>>(9)?.map(|v| v as u64),
+                input_tokens: row.get::<_, Option<i64>>(10)?.map(|v| v as u64),
+                output_tokens: row.get::<_, Option<i64>>(11)?.map(|v| v as u64),
+                cache_read_tokens: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
+                cache_creation_tokens: row.get::<_, Option<i64>>(13)?.map(|v| v as u64),
+                cost_usd: row.get(14)?,
+                stop_reason: row.get(15)?,
+                error: row.get(16)?,
+                stream: row.get::<_, i64>(17)? != 0,
+                request_body: None,
+                response_text: None,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    pub fn get(&self, id: &str) -> Result<Option<RequestRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, ts, method, path, model, status, upstream_id, upstream_label,
+                    ttfb_ms, duration_ms, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, cost_usd, stop_reason,
+                    error, stream, request_body, response_text
+             FROM requests WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(RequestRecord {
+                id: row.get(0)?,
+                ts: row.get(1)?,
+                method: row.get(2)?,
+                path: row.get(3)?,
+                model: row.get(4)?,
+                status: row.get::<_, Option<i64>>(5)?.map(|v| v as u16),
+                upstream_id: row.get(6)?,
+                upstream_label: row.get(7)?,
+                ttfb_ms: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+                duration_ms: row.get::<_, Option<i64>>(9)?.map(|v| v as u64),
+                input_tokens: row.get::<_, Option<i64>>(10)?.map(|v| v as u64),
+                output_tokens: row.get::<_, Option<i64>>(11)?.map(|v| v as u64),
+                cache_read_tokens: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
+                cache_creation_tokens: row.get::<_, Option<i64>>(13)?.map(|v| v as u64),
+                cost_usd: row.get(14)?,
+                stop_reason: row.get(15)?,
+                error: row.get(16)?,
+                stream: row.get::<_, i64>(17)? != 0,
+                request_body: row.get(18)?,
+                response_text: row.get(19)?,
+            })
+        })?;
+        if let Some(r) = rows.next() {
+            Ok(Some(r?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn stats(&self) -> Result<Stats> {
+        let conn = self.conn.lock().unwrap();
+        let (total, ti, to, tcr, tcc, cost, errors): (
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            f64,
+            u64,
+        ) = conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(input_tokens),0),
+                COALESCE(SUM(output_tokens),0),
+                COALESCE(SUM(cache_read_tokens),0),
+                COALESCE(SUM(cache_creation_tokens),0),
+                COALESCE(SUM(cost_usd),0),
+                COALESCE(SUM(CASE WHEN error IS NOT NULL OR status >= 400 THEN 1 ELSE 0 END),0)
+             FROM requests",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, i64>(1)? as u64,
+                    row.get::<_, i64>(2)? as u64,
+                    row.get::<_, i64>(3)? as u64,
+                    row.get::<_, i64>(4)? as u64,
+                    row.get::<_, f64>(5)?,
+                    row.get::<_, i64>(6)? as u64,
+                ))
+            },
+        )?;
+
+        let mut by_model = Vec::new();
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(model,'unknown'), COUNT(*),
+                    COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                    COALESCE(SUM(cost_usd),0)
+             FROM requests GROUP BY model ORDER BY SUM(cost_usd) DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ModelStat {
+                model: row.get(0)?,
+                requests: row.get::<_, i64>(1)? as u64,
+                input_tokens: row.get::<_, i64>(2)? as u64,
+                output_tokens: row.get::<_, i64>(3)? as u64,
+                cost_usd: row.get(4)?,
+            })
+        })?;
+        for r in rows {
+            by_model.push(r?);
+        }
+
+        Ok(Stats {
+            total_requests: total,
+            total_input: ti,
+            total_output: to,
+            total_cache_read: tcr,
+            total_cache_creation: tcc,
+            total_cost: cost,
+            errors,
+            by_model,
+        })
+    }
+
+    pub fn clear(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM requests", [])?;
+        Ok(())
+    }
+}

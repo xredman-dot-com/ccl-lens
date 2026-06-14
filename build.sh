@@ -42,10 +42,10 @@ fi
 if [ "$WANT_DMG" -eq 1 ]; then
   echo "==> 打包 .app + .dmg（首次 release 编译较慢）"
   # CI=true 让 bundle_dmg.sh 跳过 Finder 窗口美化脚本，避免在无 GUI 会话里崩溃
-  CI=true pnpm tauri build --bundles app,dmg "${PASS[@]}"
+  CI=true pnpm tauri build --bundles app,dmg ${PASS[@]+"${PASS[@]}"}
 else
   echo "==> 打包 .app（默认；要 dmg 加 --dmg）"
-  pnpm tauri build --bundles app "${PASS[@]}"
+  pnpm tauri build --bundles app ${PASS[@]+"${PASS[@]}"}
 fi
 
 echo

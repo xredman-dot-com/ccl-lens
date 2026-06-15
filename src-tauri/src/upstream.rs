@@ -86,6 +86,7 @@ pub fn client_for(up: &Upstream) -> Option<Client> {
 
 fn build_client(up: &Upstream) -> Option<Client> {
     let mut b = Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(15))
         .pool_idle_timeout(Duration::from_secs(90))
         // no overall timeout: streaming responses can run for minutes
@@ -96,7 +97,14 @@ fn build_client(up: &Upstream) -> Option<Client> {
             if up.url.trim().is_empty() {
                 return None;
             }
-            match reqwest::Proxy::all(&up.url) {
+            let proxy_url = if up.kind == UpstreamKind::Socks5
+                && up.url.to_ascii_lowercase().starts_with("socks5://")
+            {
+                format!("socks5h://{}", &up.url["socks5://".len()..])
+            } else {
+                up.url.clone()
+            };
+            match reqwest::Proxy::all(&proxy_url) {
                 Ok(p) => b = b.proxy(p),
                 Err(_) => return None,
             }

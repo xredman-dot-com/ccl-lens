@@ -15,6 +15,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 shopt -s nullglob
 
+ROOT_DIR="$(pwd -P)"
+TARGET_DIR="src-tauri/target"
+TARGET_MARKER="$TARGET_DIR/.ccl-lens-workspace-root"
+
 usage() {
   cat <<'EOF'
 ccl-lens 打包脚本
@@ -58,6 +62,20 @@ done
 for bin in pnpm cargo; do
   command -v "$bin" >/dev/null 2>&1 || { echo "✗ 未找到 $bin，请先安装"; exit 1; }
 done
+
+# Tauri/Cargo target 目录会缓存 build script 的 OUT_DIR 和权限清单路径。
+# 如果项目目录被移动或复制，旧绝对路径会导致 "failed to read plugin permissions"。
+if [ -d "$TARGET_DIR" ]; then
+  if [ -f "$TARGET_MARKER" ] && [ "$(cat "$TARGET_MARKER")" != "$ROOT_DIR" ]; then
+    echo "==> 检测到 target 来自其它目录，清理 Rust 构建缓存"
+    rm -rf "$TARGET_DIR"
+  elif [ ! -f "$TARGET_MARKER" ] && rg -q "/code/claude_helper/ccl-lens/src-tauri" "$TARGET_DIR" --hidden --no-ignore 2>/dev/null; then
+    echo "==> 检测到旧 Rust 构建缓存，清理 target"
+    rm -rf "$TARGET_DIR"
+  fi
+fi
+mkdir -p "$TARGET_DIR"
+printf '%s\n' "$ROOT_DIR" > "$TARGET_MARKER"
 
 # 清理上次失败残留的临时挂载卷（否则 dmg 会反复失败）
 for v in /Volumes/dmg.*; do

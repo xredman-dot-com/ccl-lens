@@ -1,17 +1,25 @@
-import type { Stats } from "../types";
-import { fmtCost, fmtNum, shortModel } from "../format";
+import type { Stats, TrafficSnapshot } from "../types";
+import { fmtBytes, fmtCost, fmtNum, shortModel } from "../format";
 
 interface Props {
   stats: Stats | null;
+  traffic: TrafficSnapshot;
+  trafficRate: { up: number; down: number };
   onClear: () => void;
 }
 
-export function StatsPanel({ stats, onClear }: Props) {
+export function StatsPanel({ stats, traffic, trafficRate, onClear }: Props) {
   if (!stats) return null;
   const cacheTotal = stats.total_cache_read + stats.total_cache_creation;
+  const totalBytes = stats.total_request_bytes + stats.total_response_bytes;
+  const sessionBytes = traffic.session_request_bytes + traffic.session_response_bytes;
   return (
     <div className="stats">
       <div className="cards">
+        <Card label="实时上传" value={`${fmtBytes(trafficRate.up)}/s`} />
+        <Card label="实时下载" value={`${fmtBytes(trafficRate.down)}/s`} accent />
+        <Card label="本次会话流量" value={fmtBytes(sessionBytes)} />
+        <Card label="历史总流量" value={fmtBytes(totalBytes)} />
         <Card label="请求总数" value={fmtNum(stats.total_requests)} />
         <Card label="输入 Token" value={fmtNum(stats.total_input)} />
         <Card label="输出 Token" value={fmtNum(stats.total_output)} />

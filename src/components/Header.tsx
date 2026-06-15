@@ -3,9 +3,11 @@ import type { AppStateView, TunnelStatus } from "../types";
 interface Props {
   state: AppStateView | null;
   tunnel: TunnelStatus | null;
+  theme: "system" | "light" | "dark";
+  onThemeChange: (theme: "system" | "light" | "dark") => void;
 }
 
-export function Header({ state, tunnel }: Props) {
+export function Header({ state, tunnel, theme, onThemeChange }: Props) {
   const running = tunnel?.running ?? state?.running ?? false;
   const port = state?.port ?? 31415;
   const baseUrl = state?.claude_base_url ?? null;
@@ -25,6 +27,15 @@ export function Header({ state, tunnel }: Props) {
         <span className="muted small">settings.json</span>
         <code>{interceptOn ? `ANTHROPIC_BASE_URL → :${port}` : "未接管"}</code>
       </div>
+
+      <label className="theme-switch">
+        <span className="muted small">主题</span>
+        <select value={theme} onChange={(e) => onThemeChange(e.target.value as Props["theme"])}>
+          <option value="system">跟随系统</option>
+          <option value="light">浅色</option>
+          <option value="dark">深色</option>
+        </select>
+      </label>
     </header>
   );
 }

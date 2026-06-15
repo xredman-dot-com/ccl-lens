@@ -1,5 +1,5 @@
 import type { RequestRecord } from "../types";
-import { fmtCost, fmtMs, fmtNum, fmtTime, shortModel } from "../format";
+import { fmtBytes, fmtCost, fmtMs, fmtNum, fmtTime, shortModel } from "../format";
 
 interface Props {
   requests: RequestRecord[];
@@ -33,6 +33,7 @@ export function Timeline({ requests, selectedId, onSelect }: Props) {
         <span className="num">In</span>
         <span className="num">Out</span>
         <span className="num">Cache</span>
+        <span className="num">流量</span>
         <span className="num">成本</span>
         <span>上游</span>
       </div>
@@ -52,6 +53,7 @@ export function Timeline({ requests, selectedId, onSelect }: Props) {
           <span className="num">{fmtNum(r.input_tokens)}</span>
           <span className="num">{fmtNum(r.output_tokens)}</span>
           <span className="num muted">{fmtNum(r.cache_read_tokens)}</span>
+          <span className="num">{fmtBytes(r.request_bytes + r.response_bytes)}</span>
           <span className="num">{fmtCost(r.cost_usd)}</span>
           <span className="muted small">{r.upstream_label ?? "—"}</span>
         </div>

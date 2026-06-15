@@ -20,6 +20,7 @@ export function Upstreams({ state, onChange }: Props) {
   const [kind, setKind] = useState<UpstreamKind>("socks5");
   const [url, setUrl] = useState("");
   const [paste, setPaste] = useState("");
+  const [formError, setFormError] = useState("");
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testFor, setTestFor] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -32,6 +33,7 @@ export function Upstreams({ state, onChange }: Props) {
 
   const onPaste = (raw: string) => {
     setPaste(raw);
+    setFormError("");
     const p = parseProxyInput(raw);
     if (p) {
       setKind(p.kind);
@@ -41,9 +43,28 @@ export function Upstreams({ state, onChange }: Props) {
   };
 
   const add = async () => {
-    const name = label.trim() || (paste.trim() ? parseProxyInput(paste)?.label ?? "" : "");
-    if (!name) return;
-    const s = await api.addUpstream(name, kind, url.trim());
+    const parsedPaste = parseProxyInput(paste);
+    const parsedUrl = parseProxyInput(url);
+    const upstream = parsedPaste ?? parsedUrl;
+    const nextKind = upstream?.kind ?? kind;
+    const nextUrl = nextKind === "direct" ? "" : upstream?.url ?? url.trim();
+    const name = label.trim() || upstream?.label || "";
+
+    if (!name) {
+      setFormError("请填写名称，或粘贴 host:port:user:pass。");
+      return;
+    }
+    if (nextKind !== "direct" && !nextUrl) {
+      setFormError("请填写代理地址，支持 host:port:user:pass 或 socks5h://...");
+      return;
+    }
+    if (nextKind !== "direct" && !parseProxyInput(nextUrl)) {
+      setFormError("代理地址格式不正确。");
+      return;
+    }
+
+    setFormError("");
+    const s = await api.addUpstream(name, nextKind, nextUrl);
     onChange(s);
     setLabel("");
     setUrl("");
@@ -157,7 +178,7 @@ export function Upstreams({ state, onChange }: Props) {
           <option value="direct">direct</option>
         </select>
         <input
-          placeholder={kind === "direct" ? "(无需地址)" : "socks5://host:1080"}
+          placeholder={kind === "direct" ? "(无需地址)" : "socks5h://host:1080"}
           value={url}
           disabled={kind === "direct"}
           onChange={(e) => setUrl(e.target.value)}
@@ -165,6 +186,7 @@ export function Upstreams({ state, onChange }: Props) {
         <button className="btn btn-sm" onClick={add}>
           添加
         </button>
+        {formError && <div className="form-error">{formError}</div>}
       </div>
     </section>
   );

@@ -16,7 +16,7 @@ pub struct UpstreamView {
     pub health: Health,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct AppStateView {
     pub port: u16,
     pub running: bool,
@@ -34,7 +34,7 @@ pub fn health_view(pool: &Pool) -> Vec<UpstreamView> {
         .collect()
 }
 
-fn build_view(state: &AppState) -> AppStateView {
+pub fn build_view(state: &AppState) -> AppStateView {
     let cfg = state.config.lock().unwrap().clone();
     AppStateView {
         port: cfg.port,
@@ -49,11 +49,7 @@ fn build_view(state: &AppState) -> AppStateView {
 
 /// Probe the active tunnel (exit IP + geo + latency) and broadcast it.
 /// No-op when the proxy isn't running.
-pub async fn update_tunnel(
-    app: AppHandle,
-    pool: Arc<Pool>,
-    tunnel: Arc<Mutex<TunnelStatus>>,
-) {
+pub async fn update_tunnel(app: AppHandle, pool: Arc<Pool>, tunnel: Arc<Mutex<TunnelStatus>>) {
     let (running, port, mode) = {
         let t = tunnel.lock().unwrap();
         (t.running, t.port, t.takeover_mode.clone())
@@ -114,6 +110,7 @@ pub async fn start_intercept(
         let handle = crate::proxy::start(
             state.pool.clone(),
             state.store.clone(),
+            state.traffic.clone(),
             app.clone(),
             port,
         )
@@ -159,10 +156,7 @@ pub fn get_tunnel(state: State<'_, AppState>) -> TunnelStatus {
 /// Actively test one upstream: resolve exit IP/geo and hit Anthropic's
 /// /v1/models, returning status + a body snippet so you can see the response.
 #[tauri::command]
-pub async fn test_upstream(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<TestResult, String> {
+pub async fn test_upstream(state: State<'_, AppState>, id: String) -> Result<TestResult, String> {
     let up = {
         let c = state.config.lock().unwrap();
         c.upstreams.iter().find(|u| u.id == id).cloned()

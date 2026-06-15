@@ -33,11 +33,21 @@ impl Store {
                 stop_reason TEXT,
                 error TEXT,
                 stream INTEGER NOT NULL DEFAULT 0,
+                request_bytes INTEGER NOT NULL DEFAULT 0,
+                response_bytes INTEGER NOT NULL DEFAULT 0,
                 request_body TEXT,
                 response_text TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts DESC);",
         )?;
+        let _ = conn.execute(
+            "ALTER TABLE requests ADD COLUMN request_bytes INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE requests ADD COLUMN response_bytes INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(Store {
             conn: Mutex::new(conn),
         })
@@ -50,10 +60,10 @@ impl Store {
                 id, ts, method, path, model, status, upstream_id, upstream_label,
                 ttfb_ms, duration_ms, input_tokens, output_tokens,
                 cache_read_tokens, cache_creation_tokens, cost_usd, stop_reason,
-                error, stream, request_body, response_text
+                error, stream, request_bytes, response_bytes, request_body, response_text
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                ?16, ?17, ?18, ?19, ?20
+                ?16, ?17, ?18, ?19, ?20, ?21, ?22
             )",
             params![
                 r.id,
@@ -74,6 +84,8 @@ impl Store {
                 r.stop_reason,
                 r.error,
                 r.stream as i64,
+                r.request_bytes as i64,
+                r.response_bytes as i64,
                 r.request_body,
                 r.response_text,
             ],
@@ -87,7 +99,7 @@ impl Store {
             "SELECT id, ts, method, path, model, status, upstream_id, upstream_label,
                     ttfb_ms, duration_ms, input_tokens, output_tokens,
                     cache_read_tokens, cache_creation_tokens, cost_usd, stop_reason,
-                    error, stream
+                    error, stream, request_bytes, response_bytes
              FROM requests ORDER BY ts DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(params![limit, offset], |row| {
@@ -110,6 +122,8 @@ impl Store {
                 stop_reason: row.get(15)?,
                 error: row.get(16)?,
                 stream: row.get::<_, i64>(17)? != 0,
+                request_bytes: row.get::<_, i64>(18)? as u64,
+                response_bytes: row.get::<_, i64>(19)? as u64,
                 request_body: None,
                 response_text: None,
             })
@@ -127,7 +141,7 @@ impl Store {
             "SELECT id, ts, method, path, model, status, upstream_id, upstream_label,
                     ttfb_ms, duration_ms, input_tokens, output_tokens,
                     cache_read_tokens, cache_creation_tokens, cost_usd, stop_reason,
-                    error, stream, request_body, response_text
+                    error, stream, request_bytes, response_bytes, request_body, response_text
              FROM requests WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
@@ -150,8 +164,10 @@ impl Store {
                 stop_reason: row.get(15)?,
                 error: row.get(16)?,
                 stream: row.get::<_, i64>(17)? != 0,
-                request_body: row.get(18)?,
-                response_text: row.get(19)?,
+                request_bytes: row.get::<_, i64>(18)? as u64,
+                response_bytes: row.get::<_, i64>(19)? as u64,
+                request_body: row.get(20)?,
+                response_text: row.get(21)?,
             })
         })?;
         if let Some(r) = rows.next() {
@@ -163,7 +179,9 @@ impl Store {
 
     pub fn stats(&self) -> Result<Stats> {
         let conn = self.conn.lock().unwrap();
-        let (total, ti, to, tcr, tcc, cost, errors): (
+        let (total, req_bytes, resp_bytes, ti, to, tcr, tcc, cost, errors): (
+            u64,
+            u64,
             u64,
             u64,
             u64,
@@ -174,6 +192,8 @@ impl Store {
         ) = conn.query_row(
             "SELECT
                 COUNT(*),
+                COALESCE(SUM(request_bytes),0),
+                COALESCE(SUM(response_bytes),0),
                 COALESCE(SUM(input_tokens),0),
                 COALESCE(SUM(output_tokens),0),
                 COALESCE(SUM(cache_read_tokens),0),
@@ -189,8 +209,10 @@ impl Store {
                     row.get::<_, i64>(2)? as u64,
                     row.get::<_, i64>(3)? as u64,
                     row.get::<_, i64>(4)? as u64,
-                    row.get::<_, f64>(5)?,
+                    row.get::<_, i64>(5)? as u64,
                     row.get::<_, i64>(6)? as u64,
+                    row.get::<_, f64>(7)?,
+                    row.get::<_, i64>(8)? as u64,
                 ))
             },
         )?;
@@ -217,6 +239,8 @@ impl Store {
 
         Ok(Stats {
             total_requests: total,
+            total_request_bytes: req_bytes,
+            total_response_bytes: resp_bytes,
             total_input: ti,
             total_output: to,
             total_cache_read: tcr,

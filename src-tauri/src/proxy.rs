@@ -1,5 +1,6 @@
 use crate::models::RequestRecord;
 use crate::sse::SseAccumulator;
+use crate::state::TrafficMeter;
 use crate::store::Store;
 use crate::upstream::Pool;
 use axum::body::{Body, Bytes};
@@ -29,17 +30,24 @@ impl ProxyHandle {
 struct ProxyCtx {
     pool: Arc<Pool>,
     store: Arc<Store>,
+    traffic: Arc<TrafficMeter>,
     app: AppHandle,
 }
 
 pub async fn start(
     pool: Arc<Pool>,
     store: Arc<Store>,
+    traffic: Arc<TrafficMeter>,
     app: AppHandle,
     port: u16,
 ) -> anyhow::Result<ProxyHandle> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    let ctx = ProxyCtx { pool, store, app };
+    let ctx = ProxyCtx {
+        pool,
+        store,
+        traffic,
+        app,
+    };
     let router = Router::new().fallback(handler).with_state(ctx);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
@@ -106,12 +114,29 @@ fn error_response(code: u16, msg: &str) -> Response {
         .unwrap()
 }
 
-fn finalize_error(ctx: &ProxyCtx, mut record: RequestRecord, start: Instant, status: u16, msg: String) {
+fn finalize_error(
+    ctx: &ProxyCtx,
+    mut record: RequestRecord,
+    start: Instant,
+    status: u16,
+    msg: String,
+) {
     record.status = Some(status);
     record.error = Some(msg);
     record.duration_ms = Some(start.elapsed().as_millis() as u64);
     let _ = ctx.store.insert(&record);
     let _ = ctx.app.emit("request", &record);
+}
+
+fn emit_traffic(ctx: &ProxyCtx) {
+    let (request_bytes, response_bytes) = ctx.traffic.snapshot();
+    let _ = ctx.app.emit(
+        "traffic",
+        crate::models::TrafficSnapshot {
+            session_request_bytes: request_bytes,
+            session_response_bytes: response_bytes,
+        },
+    );
 }
 
 async fn handler(
@@ -129,6 +154,9 @@ async fn handler(
         .to_string();
 
     let mut record = RequestRecord::new(method.as_str().to_string(), path_q.clone());
+    record.request_bytes = body.len() as u64;
+    ctx.traffic.add_request(record.request_bytes);
+    emit_traffic(&ctx);
 
     // Parse request body for model / stream flag and keep a pretty copy.
     if !body.is_empty() {
@@ -210,14 +238,27 @@ async fn handler(
     let store = ctx.store.clone();
     let app = ctx.app.clone();
     let pool_for_stream = ctx.pool.clone();
+    let traffic = ctx.traffic.clone();
+    let traffic_app = ctx.app.clone();
 
     let stream = async_stream::stream! {
         let mut acc = SseAccumulator::new();
         let mut json_buf: Vec<u8> = Vec::new();
+        let mut response_bytes = 0u64;
         let mut upstream = resp.bytes_stream();
         while let Some(item) = upstream.next().await {
             match item {
                 Ok(bytes) => {
+                    response_bytes += bytes.len() as u64;
+                    traffic.add_response(bytes.len() as u64);
+                    let (session_request_bytes, session_response_bytes) = traffic.snapshot();
+                    let _ = traffic_app.emit(
+                        "traffic",
+                        crate::models::TrafficSnapshot {
+                            session_request_bytes,
+                            session_response_bytes,
+                        },
+                    );
                     if is_sse {
                         acc.feed_sse(&bytes);
                     } else if json_buf.len() < 2_000_000 {
@@ -241,6 +282,7 @@ async fn handler(
 
         let mut rec = record;
         rec.duration_ms = Some(req_start.elapsed().as_millis() as u64);
+        rec.response_bytes = response_bytes;
         if rec.model.is_none() {
             rec.model = acc.model.clone();
         }

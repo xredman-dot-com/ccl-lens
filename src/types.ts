@@ -70,6 +70,8 @@ export interface RequestRecord {
   stop_reason: string | null;
   error: string | null;
   stream: boolean;
+  request_bytes: number;
+  response_bytes: number;
   request_body?: string | null;
   response_text?: string | null;
 }
@@ -98,6 +100,8 @@ export interface ModelStat {
 
 export interface Stats {
   total_requests: number;
+  total_request_bytes: number;
+  total_response_bytes: number;
   total_input: number;
   total_output: number;
   total_cache_read: number;
@@ -105,4 +109,9 @@ export interface Stats {
   total_cost: number;
   errors: number;
   by_model: ModelStat[];
+}
+
+export interface TrafficSnapshot {
+  session_request_bytes: number;
+  session_response_bytes: number;
 }

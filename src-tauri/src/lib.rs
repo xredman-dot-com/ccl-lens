@@ -6,6 +6,7 @@ mod proxy;
 mod sse;
 mod state;
 mod store;
+mod tray;
 mod upstream;
 
 use state::AppState;
@@ -24,6 +25,7 @@ pub fn run() {
         ))
         .manage(app_state)
         .setup(|app| {
+            tray::setup(app)?;
             let handle = app.handle().clone();
             let state = app.state::<AppState>();
             let pool = state.pool.clone();

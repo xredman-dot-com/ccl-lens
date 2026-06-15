@@ -5,6 +5,7 @@ use crate::upstream::Pool;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 fn home() -> PathBuf {
@@ -79,6 +80,30 @@ pub struct AppState {
     pub store: Arc<Store>,
     pub proxy: Mutex<Option<ProxyHandle>>,
     pub tunnel: Arc<Mutex<TunnelStatus>>,
+    pub traffic: Arc<TrafficMeter>,
+}
+
+#[derive(Default)]
+pub struct TrafficMeter {
+    request_bytes: AtomicU64,
+    response_bytes: AtomicU64,
+}
+
+impl TrafficMeter {
+    pub fn add_request(&self, bytes: u64) {
+        self.request_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn add_response(&self, bytes: u64) {
+        self.response_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> (u64, u64) {
+        (
+            self.request_bytes.load(Ordering::Relaxed),
+            self.response_bytes.load(Ordering::Relaxed),
+        )
+    }
 }
 
 impl AppState {
@@ -91,12 +116,14 @@ impl AppState {
         ));
         let store = Arc::new(Store::open(&db_path())?);
         let tunnel = Arc::new(Mutex::new(TunnelStatus::stopped(config.port)));
+        let traffic = Arc::new(TrafficMeter::default());
         Ok(AppState {
             config: Mutex::new(config),
             pool,
             store,
             proxy: Mutex::new(None),
             tunnel,
+            traffic,
         })
     }
 
@@ -107,8 +134,11 @@ impl AppState {
     /// Push the current config's upstream/mode/pin into the live pool and persist.
     pub fn sync_pool_and_save(&self) {
         let cfg = self.config.lock().unwrap().clone();
-        self.pool
-            .set_all(cfg.upstreams.clone(), cfg.mode.clone(), cfg.pinned_id.clone());
+        self.pool.set_all(
+            cfg.upstreams.clone(),
+            cfg.mode.clone(),
+            cfg.pinned_id.clone(),
+        );
         let _ = cfg.save();
     }
 }

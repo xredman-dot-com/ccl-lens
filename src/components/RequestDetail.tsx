@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { RequestRecord } from "../types";
 import { api } from "../api";
-import { fmtCost, fmtMs, fmtNum, shortModel } from "../format";
+import { fmtBytes, fmtCost, fmtMs, fmtNum, shortModel } from "../format";
 
 interface Props {
   id: string | null;
@@ -47,6 +47,10 @@ export function RequestDetail({ id, onClose }: Props) {
             <Row k="状态" v={rec.error ? `ERR: ${rec.error}` : String(rec.status ?? "—")} />
             <Row k="上游" v={rec.upstream_label ?? "—"} />
             <Row k="TTFB / 时长" v={`${fmtMs(rec.ttfb_ms)} / ${fmtMs(rec.duration_ms)}`} />
+            <Row
+              k="流量 (up/down)"
+              v={`${fmtBytes(rec.request_bytes)} / ${fmtBytes(rec.response_bytes)}`}
+            />
             <Row
               k="Token (in/out)"
               v={`${fmtNum(rec.input_tokens)} / ${fmtNum(rec.output_tokens)}`}

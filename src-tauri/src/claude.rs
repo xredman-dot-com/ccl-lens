@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 
 const BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
+const LOOPBACK_NO_PROXY: [&str; 4] = ["localhost", "127.0.0.1", "::1", "0.0.0.0"];
 
 fn home() -> Result<PathBuf> {
     std::env::var("HOME")
@@ -38,6 +39,22 @@ fn write_root_atomic(root: &Value) -> Result<()> {
     Ok(())
 }
 
+fn merge_no_proxy(current: Option<&str>) -> String {
+    let mut parts: Vec<String> = current
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    for item in LOOPBACK_NO_PROXY {
+        if !parts.iter().any(|p| p.eq_ignore_ascii_case(item)) {
+            parts.push(item.to_string());
+        }
+    }
+    parts.join(",")
+}
+
 /// Point Claude Code at our local proxy. Non-destructive: only adds
 /// ANTHROPIC_BASE_URL and ensures NO_PROXY exempts loopback. Backs up the
 /// original once before the first mutation.
@@ -64,9 +81,13 @@ pub fn enable_intercept(port: u16) -> Result<()> {
         BASE_URL_KEY.to_string(),
         json!(format!("http://127.0.0.1:{}", port)),
     );
-    if !env.contains_key("NO_PROXY") {
-        env.insert("NO_PROXY".to_string(), json!("localhost,127.0.0.1,::1"));
-    }
+    let merged_no_proxy = merge_no_proxy(
+        env.get("NO_PROXY")
+            .or_else(|| env.get("no_proxy"))
+            .and_then(|v| v.as_str()),
+    );
+    env.insert("NO_PROXY".to_string(), json!(merged_no_proxy.clone()));
+    env.insert("no_proxy".to_string(), json!(merged_no_proxy));
     write_root_atomic(&root)?;
     Ok(())
 }

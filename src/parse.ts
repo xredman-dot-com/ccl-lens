@@ -13,6 +13,8 @@ export interface ParsedProxy {
  *   host:port
  *   user:pass@host:port
  *   socks5://... / socks5h://... / http://... / https://...
+ * Shorthand SOCKS inputs are normalized to socks5h:// so DNS is resolved
+ * through the proxy, which is more reliable with Clash/TUN enabled.
  */
 export function parseProxyInput(raw: string): ParsedProxy | null {
   const s = raw.trim();
@@ -52,7 +54,7 @@ export function parseProxyInput(raw: string): ParsedProxy | null {
   const auth = user ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : "";
   return {
     kind: "socks5",
-    url: `socks5://${auth}${host}:${port}`,
+    url: `socks5h://${auth}${host}:${port}`,
     label: `${host}:${port}`,
   };
 }

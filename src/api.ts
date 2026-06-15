@@ -8,6 +8,7 @@ import type {
   TakeoverMode,
   TestResult,
   TunnelStatus,
+  TrafficSnapshot,
   UpstreamKind,
   Upstream,
   UpstreamView,
@@ -48,4 +49,12 @@ export function onHealth(cb: (u: UpstreamView[]) => void): Promise<UnlistenFn> {
 
 export function onTunnel(cb: (t: TunnelStatus) => void): Promise<UnlistenFn> {
   return listen<TunnelStatus>("tunnel", (e) => cb(e.payload));
+}
+
+export function onTraffic(cb: (t: TrafficSnapshot) => void): Promise<UnlistenFn> {
+  return listen<TrafficSnapshot>("traffic", (e) => cb(e.payload));
+}
+
+export function onState(cb: (s: AppStateView) => void): Promise<UnlistenFn> {
+  return listen<AppStateView>("state", (e) => cb(e.payload));
 }

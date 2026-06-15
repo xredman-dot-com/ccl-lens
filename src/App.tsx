@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { AppStateView, RequestRecord, Stats, TakeoverMode, TunnelStatus } from "./types";
-import { api, onHealth, onRequest, onTunnel } from "./api";
+import type {
+  AppStateView,
+  RequestRecord,
+  Stats,
+  TakeoverMode,
+  TrafficSnapshot,
+  TunnelStatus,
+} from "./types";
+import { api, onHealth, onRequest, onState, onTraffic, onTunnel } from "./api";
 import { Header } from "./components/Header";
 import { Connection } from "./components/Connection";
 import { Upstreams } from "./components/Upstreams";
@@ -10,6 +17,7 @@ import { StatsPanel } from "./components/Stats";
 import { RequestDetail } from "./components/RequestDetail";
 
 const MAX_ROWS = 500;
+type ThemeMode = "system" | "light" | "dark";
 
 export default function App() {
   const [state, setState] = useState<AppStateView | null>(null);
@@ -17,10 +25,20 @@ export default function App() {
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [tab, setTab] = useState<"timeline" | "stats">("timeline");
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem("ccl-theme");
+    return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
+  });
+  const [traffic, setTraffic] = useState<TrafficSnapshot>({
+    session_request_bytes: 0,
+    session_response_bytes: 0,
+  });
+  const [trafficRate, setTrafficRate] = useState({ up: 0, down: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const statsTimer = useRef<number | null>(null);
+  const trafficSample = useRef<{ t: number; up: number; down: number } | null>(null);
 
   const refreshStats = () => {
     if (statsTimer.current) return;
@@ -29,6 +47,23 @@ export default function App() {
       api.getStats().then(setStats);
     }, 1200);
   };
+
+  useEffect(() => {
+    const applyTheme = () => {
+      const resolved =
+        theme === "system"
+          ? window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark"
+          : theme;
+      document.documentElement.dataset.theme = resolved;
+      localStorage.setItem("ccl-theme", theme);
+    };
+    applyTheme();
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
+  }, [theme]);
 
   useEffect(() => {
     api.getState().then(setState);
@@ -44,10 +79,30 @@ export default function App() {
       setState((prev) => (prev ? { ...prev, upstreams: ups } : prev));
     });
     const unTunnel = onTunnel(setTunnel);
+    const unState = onState(setState);
+    const unTraffic = onTraffic((next) => {
+      const now = performance.now();
+      const prev = trafficSample.current;
+      if (prev) {
+        const seconds = Math.max((now - prev.t) / 1000, 0.2);
+        setTrafficRate({
+          up: Math.max(0, (next.session_request_bytes - prev.up) / seconds),
+          down: Math.max(0, (next.session_response_bytes - prev.down) / seconds),
+        });
+      }
+      trafficSample.current = {
+        t: now,
+        up: next.session_request_bytes,
+        down: next.session_response_bytes,
+      };
+      setTraffic(next);
+    });
     return () => {
       unReq.then((f) => f());
       unHealth.then((f) => f());
       unTunnel.then((f) => f());
+      unState.then((f) => f());
+      unTraffic.then((f) => f());
     };
   }, []);
 
@@ -76,7 +131,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header state={state} tunnel={tunnel} />
+      <Header state={state} tunnel={tunnel} theme={theme} onThemeChange={setTheme} />
 
       <div className="layout">
         <div className="sidebar">
@@ -117,7 +172,12 @@ export default function App() {
               onSelect={(r) => setSelectedId(r.id)}
             />
           ) : (
-            <StatsPanel stats={stats} onClear={clearHistory} />
+            <StatsPanel
+              stats={stats}
+              traffic={traffic}
+              trafficRate={trafficRate}
+              onClear={clearHistory}
+            />
           )}
         </main>
 

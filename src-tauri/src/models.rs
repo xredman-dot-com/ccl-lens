@@ -100,6 +100,10 @@ pub struct RequestRecord {
     pub error: Option<String>,
     pub stream: bool,
     #[serde(default)]
+    pub request_bytes: u64,
+    #[serde(default)]
+    pub response_bytes: u64,
+    #[serde(default)]
     pub request_body: Option<String>,
     #[serde(default)]
     pub response_text: Option<String>,
@@ -126,6 +130,8 @@ impl RequestRecord {
             stop_reason: None,
             error: None,
             stream: false,
+            request_bytes: 0,
+            response_bytes: 0,
             request_body: None,
             response_text: None,
         }
@@ -144,6 +150,8 @@ pub struct ModelStat {
 #[derive(Debug, Clone, Serialize)]
 pub struct Stats {
     pub total_requests: u64,
+    pub total_request_bytes: u64,
+    pub total_response_bytes: u64,
     pub total_input: u64,
     pub total_output: u64,
     pub total_cache_read: u64,
@@ -151,6 +159,12 @@ pub struct Stats {
     pub total_cost: f64,
     pub errors: u64,
     pub by_model: Vec<ModelStat>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TrafficSnapshot {
+    pub session_request_bytes: u64,
+    pub session_response_bytes: u64,
 }
 
 /// How ccl-lens routes Claude Code through the proxy.

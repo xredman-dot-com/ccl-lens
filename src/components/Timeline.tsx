@@ -17,10 +17,13 @@ function statusClass(r: RequestRecord): string {
 export function Timeline({ requests, selectedId, onSelect }: Props) {
   if (requests.length === 0) {
     return (
-      <div className="empty">
-        还没有请求。启动拦截后，在任意项目运行 <code>claude</code> 即可看到流量。
+    <div className="empty">
+      暂无请求记录
+      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+        启动拦截后，在任意项目运行 <code>claude</code> 即可看到流量
       </div>
-    );
+    </div>
+  );
   }
   return (
     <div className="table">

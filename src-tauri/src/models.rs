@@ -167,13 +167,13 @@ pub struct TrafficSnapshot {
     pub session_response_bytes: u64,
 }
 
-/// How ccl-lens routes Claude Code through the proxy.
+/// How ccl-lens routes Claude Code through the local HTTP proxy.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TakeoverMode {
-    /// Patch ~/.claude/settings.json env.ANTHROPIC_BASE_URL (auto-routes CC).
+    /// Patch ~/.claude/settings.json proxy env vars (auto-routes CC).
     Config,
-    /// Don't touch config; user exports ANTHROPIC_BASE_URL themselves.
+    /// Don't touch config; user exports proxy env vars themselves.
     Env,
     /// Don't touch config; only bind the port and verify the upstream tunnel.
     Test,

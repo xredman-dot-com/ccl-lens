@@ -5,10 +5,11 @@ import { fmtBytes, fmtCost, fmtMs, fmtNum, shortModel } from "../format";
 
 interface Props {
   id: string | null;
+  width: number;
   onClose: () => void;
 }
 
-export function RequestDetail({ id, onClose }: Props) {
+export function RequestDetail({ id, width, onClose }: Props) {
   const [rec, setRec] = useState<RequestRecord | null>(null);
 
   useEffect(() => {
@@ -29,16 +30,18 @@ export function RequestDetail({ id, onClose }: Props) {
   }
 
   return (
-    <aside className="detail">
+    <aside className="detail" style={{ width }}>
       <div className="detail-head">
-        <strong>请求详情</strong>
+        <span>请求详情</span>
         <button className="icon-btn" onClick={onClose}>
           ✕
         </button>
       </div>
 
       {!rec ? (
-        <div className="muted">加载中…</div>
+        <div className="detail-body">
+          <div className="empty">加载中</div>
+        </div>
       ) : (
         <div className="detail-body">
           <div className="kv">
@@ -48,15 +51,15 @@ export function RequestDetail({ id, onClose }: Props) {
             <Row k="上游" v={rec.upstream_label ?? "—"} />
             <Row k="TTFB / 时长" v={`${fmtMs(rec.ttfb_ms)} / ${fmtMs(rec.duration_ms)}`} />
             <Row
-              k="流量 (up/down)"
+              k="流量"
               v={`${fmtBytes(rec.request_bytes)} / ${fmtBytes(rec.response_bytes)}`}
             />
             <Row
-              k="Token (in/out)"
+              k="Token"
               v={`${fmtNum(rec.input_tokens)} / ${fmtNum(rec.output_tokens)}`}
             />
             <Row
-              k="Cache (read/write)"
+              k="Cache"
               v={`${fmtNum(rec.cache_read_tokens)} / ${fmtNum(rec.cache_creation_tokens)}`}
             />
             <Row k="成本" v={fmtCost(rec.cost_usd)} />

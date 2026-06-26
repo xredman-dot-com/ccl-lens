@@ -1,18 +1,16 @@
-use crate::models::RequestRecord;
-use crate::sse::SseAccumulator;
+use crate::ca::CaAuthority;
+use crate::mitm::{self, MitmCtx};
+use crate::models::{RequestRecord, UpstreamKind};
 use crate::state::TrafficMeter;
 use crate::store::Store;
 use crate::upstream::Pool;
-use axum::body::{Body, Bytes};
-use axum::extract::State;
-use axum::http::{HeaderMap, Method, Uri};
-use axum::response::Response;
-use axum::Router;
-use futures::StreamExt;
-use serde_json::Value;
+use base64::Engine;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_socks::tcp::Socks5Stream;
 
 pub struct ProxyHandle {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -32,6 +30,19 @@ struct ProxyCtx {
     store: Arc<Store>,
     traffic: Arc<TrafficMeter>,
     app: AppHandle,
+    ca: Arc<CaAuthority>,
+}
+
+impl ProxyCtx {
+    fn mitm(&self) -> MitmCtx {
+        MitmCtx {
+            pool: self.pool.clone(),
+            store: self.store.clone(),
+            traffic: self.traffic.clone(),
+            app: self.app.clone(),
+            ca: self.ca.clone(),
+        }
+    }
 }
 
 pub async fn start(
@@ -39,80 +50,46 @@ pub async fn start(
     store: Arc<Store>,
     traffic: Arc<TrafficMeter>,
     app: AppHandle,
+    ca: Arc<CaAuthority>,
     port: u16,
 ) -> anyhow::Result<ProxyHandle> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
+    let listener = TcpListener::bind(("127.0.0.1", port)).await?;
     let ctx = ProxyCtx {
         pool,
         store,
         traffic,
         app,
+        ca,
     };
-    let router = Router::new().fallback(handler).with_state(ctx);
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
+        let mut shutdown = rx;
+        loop {
+            tokio::select! {
+                _ = &mut shutdown => break,
+                accepted = listener.accept() => {
+                    match accepted {
+                        Ok((stream, _)) => {
+                            let ctx = ctx.clone();
+                            tokio::spawn(async move {
+                                handle_proxy_connection(ctx, stream).await;
+                            });
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
     });
     Ok(ProxyHandle { shutdown: Some(tx) })
 }
 
 /// Max upstreams to try within one request before giving up (bounds latency).
 const MAX_FAILOVER: usize = 3;
-
-fn short_send_err(e: &reqwest::Error) -> String {
-    if e.is_timeout() {
-        "timeout".to_string()
-    } else if e.is_connect() {
-        "connect failed".to_string()
-    } else {
-        let s = e.to_string();
-        if s.len() > 120 {
-            s[..120].to_string()
-        } else {
-            s
-        }
-    }
-}
-
-fn is_hop_request(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "host"
-            | "content-length"
-            | "accept-encoding"
-            | "connection"
-            | "proxy-connection"
-            | "proxy-authorization"
-            | "transfer-encoding"
-            | "te"
-            | "upgrade"
-            | "keep-alive"
-    )
-}
-
-fn is_hop_response(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "transfer-encoding" | "content-length" | "connection" | "keep-alive"
-    )
-}
-
-fn error_response(code: u16, msg: &str) -> Response {
-    let body = serde_json::json!({
-        "type": "error",
-        "error": { "type": "api_error", "message": msg }
-    })
-    .to_string();
-    Response::builder()
-        .status(code)
-        .header("content-type", "application/json")
-        .body(Body::from(body))
-        .unwrap()
-}
+/// Per-upstream connect/handshake deadline. Without this a stalled socks5/http
+/// handshake hangs Claude Code forever instead of failing over to the next
+/// upstream. Matches reqwest's connect_timeout used by the health probes.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 
 fn finalize_error(
     ctx: &ProxyCtx,
@@ -128,194 +105,296 @@ fn finalize_error(
     let _ = ctx.app.emit("request", &record);
 }
 
-fn emit_traffic(ctx: &ProxyCtx) {
-    let (request_bytes, response_bytes) = ctx.traffic.snapshot();
-    let _ = ctx.app.emit(
-        "traffic",
-        crate::models::TrafficSnapshot {
-            session_request_bytes: request_bytes,
-            session_response_bytes: response_bytes,
-        },
-    );
-}
-
-async fn handler(
-    State(ctx): State<ProxyCtx>,
-    method: Method,
-    uri: Uri,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
+async fn handle_proxy_connection(ctx: ProxyCtx, stream: TcpStream) {
     let req_start = Instant::now();
-    let path_q = uri
-        .path_and_query()
-        .map(|p| p.as_str())
-        .unwrap_or("/")
-        .to_string();
-
-    let mut record = RequestRecord::new(method.as_str().to_string(), path_q.clone());
-    record.request_bytes = body.len() as u64;
-    ctx.traffic.add_request(record.request_bytes);
-    emit_traffic(&ctx);
-
-    // Parse request body for model / stream flag and keep a pretty copy.
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<Value>(&body) {
-            record.model = v.get("model").and_then(|m| m.as_str()).map(String::from);
-            record.stream = v.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
-            record.request_body = serde_json::to_string_pretty(&v).ok();
+    let mut reader = BufReader::new(stream);
+    let mut header = Vec::with_capacity(1024);
+    loop {
+        let mut byte = [0u8; 1];
+        match reader.read_exact(&mut byte).await {
+            Ok(_) => {
+                if header.len() > 64 * 1024 {
+                    let mut stream = reader.into_inner();
+                    let _ =
+                        write_proxy_error(&mut stream, 431, "Request Header Fields Too Large")
+                            .await;
+                    return;
+                }
+                header.push(byte[0]);
+                if header.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(_) => return,
         }
     }
 
-    // Ordered failover candidates (Fixed = 1, Sticky/Auto = many).
-    let candidates = ctx.pool.select_ordered();
-    if candidates.is_empty() {
-        finalize_error(&ctx, record, req_start, 503, "无可用上游".to_string());
-        return error_response(503, "ccl-lens: 无可用上游");
+    let header_text = match String::from_utf8(header) {
+        Ok(s) => s,
+        Err(_) => {
+            let mut stream = reader.into_inner();
+            let _ = write_proxy_error(&mut stream, 400, "Bad Request").await;
+            return;
+        }
+    };
+    let first_line = header_text.lines().next().unwrap_or("");
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let target = parts.next().unwrap_or("");
+
+    if method.eq_ignore_ascii_case("CONNECT") {
+        handle_connect_stream(ctx, reader, target.to_string(), req_start).await;
+    } else {
+        let mut stream = reader.into_inner();
+        let _ = write_proxy_error(&mut stream, 405, "CONNECT Required").await;
+    }
+}
+
+async fn write_proxy_error(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+) -> std::io::Result<()> {
+    let body = format!("ccl-lens: {}\n", reason);
+    let response = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        reason,
+        body.len(),
+        body
+    );
+    stream.write_all(response.as_bytes()).await
+}
+
+async fn handle_connect_stream(
+    ctx: ProxyCtx,
+    reader: BufReader<TcpStream>,
+    target: String,
+    req_start: Instant,
+) {
+    let mut client = reader.into_inner();
+    let host = match split_host_port(&target) {
+        Ok((host, _)) => host,
+        Err(_) => {
+            let _ = write_proxy_error(&mut client, 400, "Invalid CONNECT Target").await;
+            return;
+        }
+    };
+
+    // Decrypt inspected hosts: ack the tunnel, then MITM the TLS so we can read
+    // model/tokens/cost. Other hosts fall through to an opaque byte tunnel.
+    if mitm::should_mitm(&host) {
+        if client
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .await
+            .is_err()
+        {
+            return;
+        }
+        mitm::serve(ctx.mitm(), client, host).await;
+        return;
     }
 
-    let url = format!("https://api.anthropic.com{}", path_q);
-    let mut chosen: Option<(crate::upstream::Selection, reqwest::Response)> = None;
+    let mut record = RequestRecord::new("CONNECT".to_string(), target.clone());
+    let candidates = ctx.pool.select_ordered();
+    if candidates.is_empty() {
+        let msg = "无可用上游".to_string();
+        finalize_error(&ctx, record, req_start, 503, msg);
+        let _ = write_proxy_error(&mut client, 503, "No Upstream").await;
+        return;
+    }
+
+    let mut chosen: Option<(crate::upstream::Selection, TcpStream)> = None;
     let mut last_err = String::new();
     let mut tried = 0usize;
-    // Only transport-level failures fail over; any HTTP response means the
-    // tunnel worked, so we keep it (even a 5xx from Anthropic).
     for sel in candidates.into_iter().take(MAX_FAILOVER) {
         tried += 1;
         let attempt_start = Instant::now();
-        let mut rb = sel.client.request(method.clone(), &url);
-        for (name, value) in headers.iter() {
-            if !is_hop_request(name.as_str()) {
-                rb = rb.header(name.clone(), value.clone());
-            }
-        }
-        rb = rb.body(reqwest::Body::from(body.clone()));
-        match rb.send().await {
-            Ok(resp) => {
+        let attempt = tokio::time::timeout(CONNECT_TIMEOUT, connect_via_upstream(&sel, &target)).await;
+        match attempt {
+            Ok(Ok(stream)) => {
                 ctx.pool
                     .record_success(&sel.id, attempt_start.elapsed().as_millis() as u64);
-                chosen = Some((sel, resp));
+                chosen = Some((sel, stream));
                 break;
             }
-            Err(e) => {
-                last_err = short_send_err(&e);
+            Ok(Err(e)) => {
+                last_err = e;
+                ctx.pool.record_failure(&sel.id, last_err.clone());
+            }
+            Err(_) => {
+                last_err = format!("连接上游超时 ({}s)", CONNECT_TIMEOUT.as_secs());
                 ctx.pool.record_failure(&sel.id, last_err.clone());
             }
         }
     }
 
-    let (sel, resp) = match chosen {
+    let (sel, mut upstream) = match chosen {
         Some(c) => c,
         None => {
-            // Every candidate failed: kick an immediate re-probe and report.
-            let pool = ctx.pool.clone();
-            let app = ctx.app.clone();
-            tauri::async_runtime::spawn(async move {
-                pool.probe_all().await;
-                let _ = app.emit("health", crate::commands::health_view(&pool));
-            });
-            let msg = format!("全部上游不可用 ({} 次尝试): {}", tried, last_err);
-            finalize_error(&ctx, record, req_start, 502, msg.clone());
-            return error_response(502, &format!("ccl-lens: {}", msg));
+            let msg = format!("CONNECT 全部上游不可用 ({} 次尝试): {}", tried, last_err);
+            finalize_error(&ctx, record, req_start, 502, msg);
+            let _ = write_proxy_error(&mut client, 502, "Bad Gateway").await;
+            return;
         }
     };
+
     record.upstream_id = Some(sel.id.clone());
     record.upstream_label = Some(sel.label.clone());
-    let stream_upstream_id = sel.id.clone();
-
-    let status = resp.status();
-    record.status = Some(status.as_u16());
+    record.status = Some(200);
     record.ttfb_ms = Some(req_start.elapsed().as_millis() as u64);
-    let resp_headers = resp.headers().clone();
-    let ct = resp_headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let is_sse = ct.contains("text/event-stream");
-    record.stream = is_sse;
 
-    let store = ctx.store.clone();
-    let app = ctx.app.clone();
-    let pool_for_stream = ctx.pool.clone();
-    let traffic = ctx.traffic.clone();
-    let traffic_app = ctx.app.clone();
+    if let Err(e) = client
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await
+    {
+        record.error = Some(format!("CONNECT response: {}", e));
+        record.duration_ms = Some(req_start.elapsed().as_millis() as u64);
+        let _ = ctx.store.insert(&record);
+        let _ = ctx.app.emit("request", &record);
+        return;
+    }
 
-    let stream = async_stream::stream! {
-        let mut acc = SseAccumulator::new();
-        let mut json_buf: Vec<u8> = Vec::new();
-        let mut response_bytes = 0u64;
-        let mut upstream = resp.bytes_stream();
-        while let Some(item) = upstream.next().await {
-            match item {
-                Ok(bytes) => {
-                    response_bytes += bytes.len() as u64;
-                    traffic.add_response(bytes.len() as u64);
-                    let (session_request_bytes, session_response_bytes) = traffic.snapshot();
-                    let _ = traffic_app.emit(
-                        "traffic",
-                        crate::models::TrafficSnapshot {
-                            session_request_bytes,
-                            session_response_bytes,
-                        },
-                    );
-                    if is_sse {
-                        acc.feed_sse(&bytes);
-                    } else if json_buf.len() < 2_000_000 {
-                        json_buf.extend_from_slice(&bytes);
-                    }
-                    yield Ok::<Bytes, std::io::Error>(bytes);
-                }
-                Err(e) => {
-                    // Mid-stream drop: degrade this upstream so the next request
-                    // (CC's retry) avoids it.
-                    pool_for_stream.record_failure(&stream_upstream_id, format!("stream: {}", e));
-                    acc.error = Some(format!("stream error: {}", e));
-                    yield Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
-                    break;
-                }
-            }
+    match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
+        Ok((request_bytes, response_bytes)) => {
+            ctx.traffic.add_request(request_bytes);
+            ctx.traffic.add_response(response_bytes);
+            record.request_bytes = request_bytes;
+            record.response_bytes = response_bytes;
         }
-        if !is_sse {
-            acc.finish_json(&json_buf);
-        }
-
-        let mut rec = record;
-        rec.duration_ms = Some(req_start.elapsed().as_millis() as u64);
-        rec.response_bytes = response_bytes;
-        if rec.model.is_none() {
-            rec.model = acc.model.clone();
-        }
-        rec.input_tokens = acc.input_tokens;
-        rec.output_tokens = acc.output_tokens;
-        rec.cache_read_tokens = acc.cache_read;
-        rec.cache_creation_tokens = acc.cache_creation;
-        rec.stop_reason = acc.stop_reason.clone();
-        if rec.error.is_none() && acc.error.is_some() {
-            rec.error = acc.error.clone();
-        }
-        if !acc.text.is_empty() {
-            rec.response_text = Some(acc.text.clone());
-        }
-        let model_for_cost = rec.model.clone().unwrap_or_default();
-        rec.cost_usd = Some(crate::pricing::cost_usd(
-            &model_for_cost,
-            rec.input_tokens.unwrap_or(0),
-            rec.output_tokens.unwrap_or(0),
-            rec.cache_read_tokens.unwrap_or(0),
-            rec.cache_creation_tokens.unwrap_or(0),
-        ));
-        let _ = store.insert(&rec);
-        let _ = app.emit("request", &rec);
-    };
-
-    let mut builder = Response::builder().status(status);
-    for (name, value) in resp_headers.iter() {
-        if !is_hop_response(name.as_str()) {
-            builder = builder.header(name.clone(), value.clone());
+        Err(e) => {
+            record.error = Some(format!("CONNECT tunnel: {}", e));
         }
     }
-    builder
-        .body(Body::from_stream(stream))
-        .unwrap_or_else(|_| error_response(500, "ccl-lens: failed to build response"))
+
+    record.duration_ms = Some(req_start.elapsed().as_millis() as u64);
+    let _ = ctx.store.insert(&record);
+    let _ = ctx.app.emit("request", &record);
+    let (session_request_bytes, session_response_bytes) = ctx.traffic.snapshot();
+    let _ = ctx.app.emit(
+        "traffic",
+        crate::models::TrafficSnapshot {
+            session_request_bytes,
+            session_response_bytes,
+        },
+    );
+}
+
+async fn connect_via_upstream(
+    sel: &crate::upstream::Selection,
+    target: &str,
+) -> Result<TcpStream, String> {
+    match sel.kind {
+        UpstreamKind::Direct => TcpStream::connect(target)
+            .await
+            .map_err(|e| format!("direct connect {}: {}", target, e)),
+        UpstreamKind::Http => connect_via_http_proxy(&sel.url, target).await,
+        UpstreamKind::Socks5 => connect_via_socks5(&sel.url, target).await,
+    }
+}
+
+struct ProxyParts {
+    host: String,
+    port: u16,
+    username: String,
+    password: Option<String>,
+}
+
+fn parse_proxy_url(url: &str, default_port: u16) -> Result<ProxyParts, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid proxy url: {}", e))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "proxy url missing host".to_string())?
+        .to_string();
+    let port = parsed
+        .port()
+        .or_else(|| parsed.port_or_known_default())
+        .unwrap_or(default_port);
+    Ok(ProxyParts {
+        host,
+        port,
+        username: parsed.username().to_string(),
+        password: parsed.password().map(String::from),
+    })
+}
+
+async fn connect_via_http_proxy(proxy_url: &str, target: &str) -> Result<TcpStream, String> {
+    let proxy = parse_proxy_url(proxy_url, 8080)?;
+    let mut stream = TcpStream::connect((proxy.host.as_str(), proxy.port))
+        .await
+        .map_err(|e| format!("http proxy connect: {}", e))?;
+    let mut req = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n", target, target);
+    if !proxy.username.is_empty() {
+        let raw = format!("{}:{}", proxy.username, proxy.password.unwrap_or_default());
+        let token = base64::engine::general_purpose::STANDARD.encode(raw);
+        req.push_str(&format!("Proxy-Authorization: Basic {}\r\n", token));
+    }
+    req.push_str("\r\n");
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .map_err(|e| format!("http proxy write: {}", e))?;
+
+    let header = read_proxy_header(&mut stream).await?;
+    if !header.starts_with("HTTP/1.1 2") && !header.starts_with("HTTP/1.0 2") {
+        let line = header.lines().next().unwrap_or("bad proxy response");
+        return Err(format!("http proxy CONNECT failed: {}", line));
+    }
+    Ok(stream)
+}
+
+async fn read_proxy_header(stream: &mut TcpStream) -> Result<String, String> {
+    let mut buf = Vec::with_capacity(1024);
+    let mut tmp = [0u8; 256];
+    loop {
+        let n = stream
+            .read(&mut tmp)
+            .await
+            .map_err(|e| format!("proxy read: {}", e))?;
+        if n == 0 {
+            return Err("proxy closed while reading response".to_string());
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            return String::from_utf8(buf).map_err(|e| format!("proxy response utf8: {}", e));
+        }
+        if buf.len() > 16 * 1024 {
+            return Err("proxy response header too large".to_string());
+        }
+    }
+}
+
+/// Open a tunnel to `target` through a socks5 proxy. Uses tokio-socks (the same
+/// proven client family reqwest uses for the health probes), with remote DNS so
+/// the proxy resolves api.anthropic.com — never the local, GFW-poisoned resolver.
+async fn connect_via_socks5(proxy_url: &str, target: &str) -> Result<TcpStream, String> {
+    let proxy = parse_proxy_url(proxy_url, 1080)?;
+    let (target_host, target_port) = split_host_port(target)?;
+    let proxy_addr = format!("{}:{}", proxy.host, proxy.port);
+    let dest = (target_host.as_str(), target_port);
+
+    let stream = if proxy.username.is_empty() {
+        Socks5Stream::connect(proxy_addr.as_str(), dest).await
+    } else {
+        Socks5Stream::connect_with_password(
+            proxy_addr.as_str(),
+            dest,
+            &proxy.username,
+            proxy.password.as_deref().unwrap_or(""),
+        )
+        .await
+    };
+    stream
+        .map(|s| s.into_inner())
+        .map_err(|e| format!("socks5: {}", e))
+}
+
+fn split_host_port(target: &str) -> Result<(String, u16), String> {
+    let (host, port) = target
+        .rsplit_once(':')
+        .ok_or_else(|| "CONNECT target missing port".to_string())?;
+    let port = port
+        .parse::<u16>()
+        .map_err(|e| format!("CONNECT target port: {}", e))?;
+    Ok((host.trim_matches(['[', ']']).to_string(), port))
 }

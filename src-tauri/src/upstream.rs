@@ -253,15 +253,35 @@ impl Pool {
     }
 
     /// Feed a failed real request back into health; circuit-break on threshold.
+    /// On circuit break, also rebuilds the reqwest client to flush stale pooled
+    /// TCP connections — this ensures recovery works after a network route change
+    /// (e.g. ClashX TUN toggled off then on).
     pub fn record_failure(&self, id: &str, err: String) {
         let mut inner = self.inner.write().unwrap();
-        if let Some(h) = inner.health.get_mut(id) {
-            h.failure += 1;
-            h.consecutive_failures += 1;
-            h.last_error = Some(err);
-            h.last_checked = Some(now_ms());
-            if h.consecutive_failures >= CIRCUIT_THRESHOLD {
-                h.state = HealthState::Down;
+        let needs_rebuild = {
+            if let Some(h) = inner.health.get_mut(id) {
+                h.failure += 1;
+                h.consecutive_failures += 1;
+                h.last_error = Some(err);
+                h.last_checked = Some(now_ms());
+                if h.consecutive_failures >= CIRCUIT_THRESHOLD {
+                    h.state = HealthState::Down;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if needs_rebuild {
+            let u_opt = inner.upstreams.iter().find(|u| u.id == id).cloned();
+            if let Some(u) = u_opt {
+                if u.enabled {
+                    if let Some(c) = build_client(&u) {
+                        inner.clients.insert(id.to_string(), c);
+                    }
+                }
             }
         }
     }
@@ -293,6 +313,14 @@ impl Pool {
 
     /// Probe every enabled upstream once and update health in place.
     pub async fn probe_all(&self) {
+        self.probe_all_cb(|| {}).await;
+    }
+
+    /// Like `probe_all`, but invokes `on_each` after every individual upstream is
+    /// probed (with the inner lock released) so callers can stream progress —
+    /// the UI marks each channel "testing" and clears it the moment its result
+    /// lands. `mark_probing` first stamps every target as in-flight.
+    pub async fn probe_all_cb<F: FnMut()>(&self, mut on_each: F) {
         let targets: Vec<(String, Client)> = {
             let inner = self.inner.read().unwrap();
             inner
@@ -310,28 +338,48 @@ impl Pool {
                 .timeout(PROBE_TIMEOUT)
                 .send()
                 .await;
-            let mut inner = self.inner.write().unwrap();
-            let h = inner.health.entry(id.clone()).or_default();
-            h.last_checked = Some(now_ms());
-            match result {
-                Ok(_) => {
-                    let sample = start.elapsed().as_millis() as u64;
-                    h.state = HealthState::Up;
-                    h.success += 1;
-                    h.consecutive_failures = 0;
-                    h.last_error = None;
-                    h.latency_ms = Some(match h.latency_ms {
-                        Some(prev) => ((prev as f64) * 0.7 + (sample as f64) * 0.3) as u64,
-                        None => sample,
-                    });
-                }
-                Err(e) => {
-                    h.state = HealthState::Down;
-                    h.failure += 1;
-                    h.consecutive_failures += 1;
-                    h.last_error = Some(short_err(&e));
+            let now = now_ms();
+            {
+                let mut inner = self.inner.write().unwrap();
+                match result {
+                    Ok(_) => {
+                        let sample = start.elapsed().as_millis() as u64;
+                        let h = inner.health.entry(id.clone()).or_default();
+                        h.last_checked = Some(now);
+                        h.state = HealthState::Up;
+                        h.success += 1;
+                        h.consecutive_failures = 0;
+                        h.last_error = None;
+                        h.latency_ms = Some(match h.latency_ms {
+                            Some(prev) => ((prev as f64) * 0.7 + (sample as f64) * 0.3) as u64,
+                            None => sample,
+                        });
+                    }
+                    Err(e) => {
+                        // Update health in its own scope so the borrow ends before we touch clients.
+                        {
+                            let h = inner.health.entry(id.clone()).or_default();
+                            h.last_checked = Some(now);
+                            h.state = HealthState::Down;
+                            h.failure += 1;
+                            h.consecutive_failures += 1;
+                            h.last_error = Some(short_err(&e));
+                        }
+                        // Rebuild client to flush stale TCP connections after network route changes
+                        // (e.g. ClashX TUN toggled off). This ensures the next probe creates a
+                        // fresh TCP connection rather than reusing a dead pooled one.
+                        let u_opt = inner.upstreams.iter().find(|u| u.id == id).cloned();
+                        if let Some(u) = u_opt {
+                            if u.enabled {
+                                if let Some(c) = build_client(&u) {
+                                    inner.clients.insert(id.clone(), c);
+                                }
+                            }
+                        }
+                    }
                 }
             }
+            on_each();
         }
     }
 }

@@ -46,7 +46,7 @@ export interface AppStateView {
   running: boolean;
   mode: SelectMode;
   pinned_id: string | null;
-  claude_base_url: string | null;
+  claude_proxy: string | null;
   takeover_mode: TakeoverMode;
   upstreams: UpstreamView[];
 }

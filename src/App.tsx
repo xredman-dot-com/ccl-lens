@@ -19,6 +19,11 @@ import { RequestDetail } from "./components/RequestDetail";
 const MAX_ROWS = 500;
 type ThemeMode = "system" | "light" | "dark";
 
+function todayMidnight(): number {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
 export default function App() {
   const [state, setState] = useState<AppStateView | null>(null);
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
@@ -37,6 +42,38 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Stats date filter — default to today
+  const [statsSince, setStatsSince] = useState<number | null>(() => todayMidnight());
+  const statsSinceRef = useRef<number | null>(statsSince);
+  statsSinceRef.current = statsSince;
+
+  // Resizable side / detail panels
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const s = localStorage.getItem("ccl-sidebar-width");
+    return s ? Math.max(240, Math.min(520, Number(s))) : 300;
+  });
+  const [detailWidth, setDetailWidth] = useState(() => {
+    const s = localStorage.getItem("ccl-detail-width");
+    return s ? Math.max(280, Math.min(700, Number(s))) : 400;
+  });
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const detailWidthRef = useRef(detailWidth);
+  detailWidthRef.current = detailWidth;
+  const resizeRef = useRef<{ target: "sidebar" | "detail"; startX: number; startW: number } | null>(
+    null
+  );
+
+  const onResizeDown = (target: "sidebar" | "detail") => (e: React.MouseEvent) => {
+    resizeRef.current = {
+      target,
+      startX: e.clientX,
+      startW: target === "sidebar" ? sidebarWidthRef.current : detailWidthRef.current,
+    };
+    e.preventDefault();
+  };
+
   const statsTimer = useRef<number | null>(null);
   const trafficSample = useRef<{ t: number; up: number; down: number } | null>(null);
 
@@ -44,9 +81,43 @@ export default function App() {
     if (statsTimer.current) return;
     statsTimer.current = window.setTimeout(() => {
       statsTimer.current = null;
-      api.getStats().then(setStats);
+      api.getStats(statsSinceRef.current).then(setStats);
     }, 1200);
   };
+
+  // Re-fetch stats when the date filter changes
+  useEffect(() => {
+    api.getStats(statsSince).then(setStats);
+  }, [statsSince]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      if (r.target === "sidebar") {
+        const next = Math.max(240, Math.min(520, r.startW + (e.clientX - r.startX)));
+        sidebarWidthRef.current = next;
+        setSidebarWidth(next);
+      } else {
+        const next = Math.max(280, Math.min(700, r.startW + (r.startX - e.clientX)));
+        detailWidthRef.current = next;
+        setDetailWidth(next);
+      }
+    };
+    const onUp = () => {
+      const r = resizeRef.current;
+      if (!r) return;
+      resizeRef.current = null;
+      localStorage.setItem("ccl-sidebar-width", String(sidebarWidthRef.current));
+      localStorage.setItem("ccl-detail-width", String(detailWidthRef.current));
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   useEffect(() => {
     const applyTheme = () => {
@@ -69,7 +140,7 @@ export default function App() {
     api.getState().then(setState);
     api.getTunnel().then(setTunnel);
     api.listRequests(MAX_ROWS, 0).then(setRequests);
-    api.getStats().then(setStats);
+    // Stats initial fetch handled by the statsSince effect above
 
     const unReq = onRequest((r) => {
       setRequests((prev) => [r, ...prev].slice(0, MAX_ROWS));
@@ -126,14 +197,19 @@ export default function App() {
   const clearHistory = async () => {
     await api.clearHistory();
     setRequests([]);
-    api.getStats().then(setStats);
+    api.getStats(statsSinceRef.current).then(setStats);
   };
+
+  const showDetail = selectedId !== null;
+  const gridCols = showDetail
+    ? `${sidebarWidth}px 4px 1fr 4px ${detailWidth}px`
+    : `${sidebarWidth}px 4px 1fr`;
 
   return (
     <div className="app">
       <Header state={state} tunnel={tunnel} theme={theme} onThemeChange={setTheme} />
 
-      <div className="layout">
+      <div className="layout" style={{ gridTemplateColumns: gridCols }}>
         <div className="sidebar">
           <Connection
             state={state}
@@ -143,9 +219,11 @@ export default function App() {
             onToggle={toggle}
             onSetMode={setTakeover}
           />
-          <Upstreams state={state} onChange={setState} />
+          <Upstreams state={state} tunnel={tunnel} onChange={setState} />
           <Settings />
         </div>
+
+        <div className="resize-handle" onMouseDown={onResizeDown("sidebar")} />
 
         <main className="content">
           <div className="tabs">
@@ -153,16 +231,16 @@ export default function App() {
               className={tab === "timeline" ? "tab on" : "tab"}
               onClick={() => setTab("timeline")}
             >
-              实时时间线
+              时间线
             </button>
             <button
               className={tab === "stats" ? "tab on" : "tab"}
               onClick={() => setTab("stats")}
             >
-              Token / 成本
+              统计
             </button>
             <span className="grow" />
-            <span className="muted small">{requests.length} 条记录</span>
+            <span className="muted small">{requests.length} 条</span>
           </div>
 
           {tab === "timeline" ? (
@@ -176,12 +254,21 @@ export default function App() {
               stats={stats}
               traffic={traffic}
               trafficRate={trafficRate}
+              sinceTs={statsSince}
+              onSinceChange={setStatsSince}
               onClear={clearHistory}
             />
           )}
         </main>
 
-        <RequestDetail id={selectedId} onClose={() => setSelectedId(null)} />
+        {showDetail && (
+          <div className="resize-handle" onMouseDown={onResizeDown("detail")} />
+        )}
+        <RequestDetail
+          id={selectedId}
+          width={detailWidth}
+          onClose={() => setSelectedId(null)}
+        />
       </div>
     </div>
   );

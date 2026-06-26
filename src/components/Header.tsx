@@ -10,8 +10,8 @@ interface Props {
 export function Header({ state, tunnel, theme, onThemeChange }: Props) {
   const running = tunnel?.running ?? state?.running ?? false;
   const port = state?.port ?? 31415;
-  const baseUrl = state?.claude_base_url ?? null;
-  const interceptOn = !!baseUrl && baseUrl.includes(String(port));
+  const proxy = state?.claude_proxy ?? null;
+  const interceptOn = !!proxy && proxy.includes(String(port));
 
   return (
     <header className="header">
@@ -25,11 +25,10 @@ export function Header({ state, tunnel, theme, onThemeChange }: Props) {
 
       <div className="intercept-status">
         <span className="muted small">settings.json</span>
-        <code>{interceptOn ? `ANTHROPIC_BASE_URL → :${port}` : "未接管"}</code>
+        <code>{interceptOn ? `Proxy → :${port}` : "未接管"}</code>
       </div>
 
       <label className="theme-switch">
-        <span className="muted small">主题</span>
         <select value={theme} onChange={(e) => onThemeChange(e.target.value as Props["theme"])}>
           <option value="system">跟随系统</option>
           <option value="light">浅色</option>

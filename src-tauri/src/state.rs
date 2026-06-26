@@ -1,3 +1,4 @@
+use crate::ca::CaAuthority;
 use crate::models::{SelectMode, TakeoverMode, TunnelStatus, Upstream};
 use crate::proxy::ProxyHandle;
 use crate::store::Store;
@@ -5,7 +6,7 @@ use crate::upstream::Pool;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 fn home() -> PathBuf {
@@ -81,6 +82,8 @@ pub struct AppState {
     pub proxy: Mutex<Option<ProxyHandle>>,
     pub tunnel: Arc<Mutex<TunnelStatus>>,
     pub traffic: Arc<TrafficMeter>,
+    pub ca: Arc<CaAuthority>,
+    shutdown_done: AtomicBool,
 }
 
 #[derive(Default)]
@@ -117,6 +120,7 @@ impl AppState {
         let store = Arc::new(Store::open(&db_path())?);
         let tunnel = Arc::new(Mutex::new(TunnelStatus::stopped(config.port)));
         let traffic = Arc::new(TrafficMeter::default());
+        let ca = Arc::new(CaAuthority::load_or_create(&data_dir())?);
         Ok(AppState {
             config: Mutex::new(config),
             pool,
@@ -124,11 +128,28 @@ impl AppState {
             proxy: Mutex::new(None),
             tunnel,
             traffic,
+            ca,
+            shutdown_done: AtomicBool::new(false),
         })
     }
 
     pub fn is_running(&self) -> bool {
         self.proxy.lock().unwrap().is_some()
+    }
+
+    /// Stop listening and restore ~/.claude/settings.json. Idempotent so it can
+    /// run from both the tray Quit and the app exit event without double work.
+    pub fn shutdown(&self) {
+        if self.shutdown_done.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mode = self.tunnel.lock().unwrap().takeover_mode.clone();
+        if let Some(h) = self.proxy.lock().unwrap().take() {
+            h.stop();
+        }
+        if mode == TakeoverMode::Config {
+            let _ = crate::claude::disable_intercept();
+        }
     }
 
     /// Push the current config's upstream/mode/pin into the live pool and persist.

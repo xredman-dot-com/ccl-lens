@@ -1,9 +1,10 @@
+mod ca;
 mod claude;
 mod commands;
+mod mitm;
 mod models;
 mod pricing;
 mod proxy;
-mod sse;
 mod state;
 mod store;
 mod tray;
@@ -11,10 +12,13 @@ mod upstream;
 
 use state::AppState;
 use std::time::Duration;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Needed by the MITM TLS server (rustls 0.23 requires an installed provider).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let app_state = AppState::new().expect("failed to initialise ccl-lens state");
 
     tauri::Builder::default()
@@ -24,7 +28,17 @@ pub fn run() {
             None,
         ))
         .manage(app_state)
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
+            // Undo any settings left patched by a previous unclean exit.
+            let _ = claude::recover_stale();
             tray::setup(app)?;
             let handle = app.handle().clone();
             let state = app.state::<AppState>();
@@ -65,8 +79,19 @@ pub fn run() {
             commands::get_request,
             commands::get_stats,
             commands::clear_history,
-            commands::probe_now
+            commands::probe_now,
+            commands::reorder_upstreams
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Restore ~/.claude/settings.json and stop listening on any exit
+            // path (tray Quit, Cmd+Q, app termination), not just the tray.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                app_handle.state::<AppState>().shutdown();
+            }
+        });
 }

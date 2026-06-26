@@ -3,6 +3,10 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
 
+/// Keep only the most recent N requests on disk. Older rows are pruned on
+/// insert so the history (and, once bodies are captured, its size) stays bounded.
+const MAX_HISTORY: i64 = 2000;
+
 pub struct Store {
     conn: Mutex<Connection>,
 }
@@ -89,6 +93,12 @@ impl Store {
                 r.request_body,
                 r.response_text,
             ],
+        )?;
+        conn.execute(
+            "DELETE FROM requests WHERE ts < (
+                SELECT ts FROM requests ORDER BY ts DESC LIMIT 1 OFFSET ?1
+            )",
+            params![MAX_HISTORY],
         )?;
         Ok(())
     }
@@ -177,8 +187,11 @@ impl Store {
         }
     }
 
-    pub fn stats(&self) -> Result<Stats> {
+    /// since_ts: optional Unix ms timestamp; only rows with ts >= since_ts are included.
+    /// Pass None to aggregate all rows (equivalent to since_ts = 0).
+    pub fn stats(&self, since_ts: Option<i64>) -> Result<Stats> {
         let conn = self.conn.lock().unwrap();
+        let since = since_ts.unwrap_or(0);
         let (total, req_bytes, resp_bytes, ti, to, tcr, tcc, cost, errors): (
             u64,
             u64,
@@ -200,8 +213,8 @@ impl Store {
                 COALESCE(SUM(cache_creation_tokens),0),
                 COALESCE(SUM(cost_usd),0),
                 COALESCE(SUM(CASE WHEN error IS NOT NULL OR status >= 400 THEN 1 ELSE 0 END),0)
-             FROM requests",
-            [],
+             FROM requests WHERE ts >= ?1",
+            params![since],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)? as u64,
@@ -222,9 +235,9 @@ impl Store {
             "SELECT COALESCE(model,'unknown'), COUNT(*),
                     COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
                     COALESCE(SUM(cost_usd),0)
-             FROM requests GROUP BY model ORDER BY SUM(cost_usd) DESC",
+             FROM requests WHERE ts >= ?1 GROUP BY model ORDER BY SUM(cost_usd) DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map(params![since], |row| {
             Ok(ModelStat {
                 model: row.get(0)?,
                 requests: row.get::<_, i64>(1)? as u64,

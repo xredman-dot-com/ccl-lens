@@ -31,10 +31,13 @@ export const api = {
   removeUpstream: (id: string) => invoke<AppStateView>("remove_upstream", { id }),
   setUpstreamEnabled: (id: string, enabled: boolean) =>
     invoke<AppStateView>("set_upstream_enabled", { id, enabled }),
+  reorderUpstreams: (ids: string[]) =>
+    invoke<AppStateView>("reorder_upstreams", { ids }),
   listRequests: (limit: number, offset: number) =>
     invoke<RequestRecord[]>("list_requests", { limit, offset }),
   getRequest: (id: string) => invoke<RequestRecord | null>("get_request", { id }),
-  getStats: () => invoke<Stats>("get_stats"),
+  getStats: (sinceTs?: number | null) =>
+    invoke<Stats>("get_stats", { sinceTs: sinceTs ?? null }),
   clearHistory: () => invoke<void>("clear_history"),
   probeNow: () => invoke<AppStateView>("probe_now"),
 };

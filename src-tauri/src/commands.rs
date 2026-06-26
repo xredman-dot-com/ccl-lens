@@ -22,7 +22,7 @@ pub struct AppStateView {
     pub running: bool,
     pub mode: SelectMode,
     pub pinned_id: Option<String>,
-    pub claude_base_url: Option<String>,
+    pub claude_proxy: Option<String>,
     pub takeover_mode: TakeoverMode,
     pub upstreams: Vec<UpstreamView>,
 }
@@ -41,7 +41,7 @@ pub fn build_view(state: &AppState) -> AppStateView {
         running: state.is_running(),
         mode: cfg.mode,
         pinned_id: cfg.pinned_id,
-        claude_base_url: crate::claude::current_base_url(),
+        claude_proxy: crate::claude::current_proxy(),
         takeover_mode: cfg.takeover_mode,
         upstreams: health_view(&state.pool),
     }
@@ -87,7 +87,13 @@ fn spawn_probe(app: AppHandle, pool: Arc<Pool>) {
     // async_runtime::spawn works from sync commands too (tokio::spawn would
     // panic without an active runtime and abort across the webview callback).
     tauri::async_runtime::spawn(async move {
-        pool.probe_all().await;
+        let (a, p) = (app.clone(), pool.clone());
+        // Emit health after every individual probe so each channel's card
+        // updates the instant its result lands (progressive "testing" state).
+        pool.probe_all_cb(|| {
+            let _ = a.emit("health", health_view(&p));
+        })
+        .await;
         let _ = app.emit("health", health_view(&pool));
     });
 }
@@ -112,6 +118,7 @@ pub async fn start_intercept(
             state.store.clone(),
             state.traffic.clone(),
             app.clone(),
+            state.ca.clone(),
             port,
         )
         .await
@@ -120,7 +127,8 @@ pub async fn start_intercept(
     }
     // Only the Config mode touches ~/.claude/settings.json.
     if mode == TakeoverMode::Config {
-        crate::claude::enable_intercept(port).map_err(|e| e.to_string())?;
+        crate::claude::enable_intercept(port, state.ca.ca_cert_path())
+            .map_err(|e| e.to_string())?;
     }
 
     *state.tunnel.lock().unwrap() = TunnelStatus::ready(port, mode);
@@ -351,8 +359,8 @@ pub fn get_request(
 }
 
 #[tauri::command]
-pub fn get_stats(state: State<'_, AppState>) -> Result<Stats, String> {
-    state.store.stats().map_err(|e| e.to_string())
+pub fn get_stats(state: State<'_, AppState>, since_ts: Option<i64>) -> Result<Stats, String> {
+    state.store.stats(since_ts).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -363,5 +371,26 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn probe_now(app: AppHandle, state: State<'_, AppState>) -> AppStateView {
     spawn_probe(app, state.pool.clone());
+    build_view(&state)
+}
+
+#[tauri::command]
+pub fn reorder_upstreams(state: State<'_, AppState>, ids: Vec<String>) -> AppStateView {
+    {
+        let mut cfg = state.config.lock().unwrap();
+        let mut ordered: Vec<Upstream> = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some(pos) = cfg.upstreams.iter().position(|u| u.id == *id) {
+                ordered.push(cfg.upstreams[pos].clone());
+            }
+        }
+        for u in &cfg.upstreams {
+            if !ids.contains(&u.id) {
+                ordered.push(u.clone());
+            }
+        }
+        cfg.upstreams = ordered;
+    }
+    state.sync_pool_and_save();
     build_view(&state)
 }

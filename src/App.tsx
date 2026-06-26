@@ -42,6 +42,9 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped when the user manually switches channel, so the connection panel can
+  // show the hand-off immediately instead of waiting for the tunnel to catch up.
+  const [switchNonce, setSwitchNonce] = useState(0);
 
   // Stats date filter — default to today
   const [statsSince, setStatsSince] = useState<number | null>(() => todayMidnight());
@@ -216,10 +219,16 @@ export default function App() {
             tunnel={tunnel}
             busy={busy}
             error={error}
+            switchNonce={switchNonce}
             onToggle={toggle}
             onSetMode={setTakeover}
           />
-          <Upstreams state={state} tunnel={tunnel} onChange={setState} />
+          <Upstreams
+            state={state}
+            tunnel={tunnel}
+            onChange={setState}
+            onSwitch={() => setSwitchNonce((n) => n + 1)}
+          />
           <Settings />
         </div>
 

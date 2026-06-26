@@ -21,6 +21,7 @@ interface Props {
   state: AppStateView | null;
   tunnel: TunnelStatus | null;
   onChange: (s: AppStateView) => void;
+  onSwitch: () => void;
 }
 
 /// Dot appearance per health + enabled state. For a live (up) channel the blink
@@ -43,7 +44,7 @@ function dotProps(h: Health, enabled: boolean): {
   return { className: "dot dot-probing" };
 }
 
-export function Upstreams({ state, tunnel, onChange }: Props) {
+export function Upstreams({ state, tunnel, onChange, onSwitch }: Props) {
   const [label, setLabel] = useState("");
   const [kind, setKind] = useState<UpstreamKind>("socks5");
   const [url, setUrl] = useState("");
@@ -299,6 +300,7 @@ export function Upstreams({ state, tunnel, onChange }: Props) {
               onClick={() => {
                 if (dragId) return;
                 if (state.mode === "fixed") {
+                  if (!pinned && u.enabled) onSwitch();
                   api.setPinned(pinned ? null : u.id).then(onChange);
                 }
               }}

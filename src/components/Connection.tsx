@@ -13,20 +13,58 @@ interface Props {
   tunnel: TunnelStatus | null;
   busy: boolean;
   error: string | null;
+  switchNonce: number;
   onToggle: () => void;
   onSetMode: (m: TakeoverMode) => void;
 }
 
-export function Connection({ state, tunnel, busy, error, onToggle, onSetMode }: Props) {
+export function Connection({
+  state,
+  tunnel,
+  busy,
+  error,
+  switchNonce,
+  onToggle,
+  onSetMode,
+}: Props) {
   const running = tunnel?.running ?? state?.running ?? false;
   const upKey = tunnel?.upstream_endpoint ?? tunnel?.upstream_label ?? null;
   const tunnelOk = tunnel?.tunnel_ok ?? false;
   const prevKey = useRef<string | null>(null);
+  const upKeyRef = useRef<string | null>(upKey);
+  upKeyRef.current = upKey;
+  const runningRef = useRef(running);
+  runningRef.current = running;
   const timers = useRef<number[]>([]);
+  const fromKey = useRef<string | null>(null);
   // Visualises the channel hand-off: 终止旧隧道 → 建立新隧道 → 正常.
   const [phase, setPhase] = useState<null | "tear" | "build">(null);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
-  // Kick off the switch sequence whenever the active upstream identity changes.
+  // Begin the tear → build sequence, remembering which channel we left so we can
+  // tell when the *new* one is actually live.
+  const startSwitch = (from: string | null) => {
+    timers.current.forEach(clearTimeout);
+    fromKey.current = from;
+    setPhase("tear");
+    timers.current = [
+      window.setTimeout(() => setPhase("build"), 600),
+      window.setTimeout(() => setPhase(null), 6000), // safety net
+    ];
+  };
+
+  // User-initiated switch (clicked another channel): show the process at once,
+  // without waiting for the backend tunnel status to catch up.
+  useEffect(() => {
+    if (switchNonce > 0 && runningRef.current && phaseRef.current === null) {
+      startSwitch(upKeyRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [switchNonce]);
+
+  // Automatic failover: detected when the active upstream identity changes on
+  // its own (sticky/auto), as long as a user switch isn't already animating.
   useEffect(() => {
     const prev = prevKey.current;
     prevKey.current = upKey;
@@ -34,23 +72,19 @@ export function Connection({ state, tunnel, busy, error, onToggle, onSetMode }: 
       setPhase(null);
       return;
     }
-    if (prev && upKey && prev !== upKey) {
-      timers.current.forEach(clearTimeout);
-      timers.current = [
-        window.setTimeout(() => setPhase("build"), 650),
-        window.setTimeout(() => setPhase(null), 4000),
-      ];
-      setPhase("tear");
+    if (prev && upKey && prev !== upKey && phaseRef.current === null) {
+      startSwitch(prev);
     }
   }, [upKey, running]);
 
-  // Resolve to 正常 the moment the freshly-built tunnel reports healthy.
+  // Resolve to 正常 once the freshly-built tunnel is healthy and is no longer the
+  // channel we switched away from.
   useEffect(() => {
-    if (phase === "build" && tunnelOk) {
-      const t = window.setTimeout(() => setPhase(null), 900);
+    if (phase === "build" && tunnelOk && upKey !== fromKey.current) {
+      const t = window.setTimeout(() => setPhase(null), 800);
       return () => clearTimeout(t);
     }
-  }, [phase, tunnelOk]);
+  }, [phase, tunnelOk, upKey]);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 

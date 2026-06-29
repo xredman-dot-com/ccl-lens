@@ -23,10 +23,7 @@ struct EnvSnapshot {
 }
 
 fn home() -> Result<PathBuf> {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .context("HOME / USERPROFILE not set")
+    crate::state::home_dir().context("无法定位用户主目录（HOME / USERPROFILE 均未设置）")
 }
 
 fn settings_path() -> Result<PathBuf> {

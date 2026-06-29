@@ -9,11 +9,18 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Resolve the user's home directory via the OS (Windows: known-folder API),
+/// falling back to HOME / USERPROFILE. Returns None only in degenerate
+/// environments where none of these are available.
+pub fn home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
 fn home() -> PathBuf {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
+    home_dir().expect("无法定位用户主目录（HOME / USERPROFILE 均未设置）")
 }
 
 pub fn data_dir() -> PathBuf {

@@ -33,3 +33,4 @@ hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
 http-body-util = "0.1"
 futures-util = "0.3"
 tokio-stream = "0.1"
+dirs = "5"

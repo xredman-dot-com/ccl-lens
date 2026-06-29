@@ -23,8 +23,9 @@ jobs:
           # Apple Silicon (M 芯片) → .dmg
           - platform: macos-14
             target: aarch64-apple-darwin
-          # Intel Mac → .dmg
-          - platform: macos-13
+          # Intel Mac → .dmg（在 Apple Silicon runner 上交叉编译；
+          # macos-13 Intel runner 正在退役、长期排不到机器）
+          - platform: macos-14
             target: x86_64-apple-darwin
           # Windows x64 → .exe (NSIS) + .msi (WiX)
           - platform: windows-latest

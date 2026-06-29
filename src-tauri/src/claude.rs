@@ -24,8 +24,9 @@ struct EnvSnapshot {
 
 fn home() -> Result<PathBuf> {
     std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
-        .context("HOME not set")
+        .context("HOME / USERPROFILE not set")
 }
 
 fn settings_path() -> Result<PathBuf> {

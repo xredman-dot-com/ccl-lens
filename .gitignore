@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code / oh-my-claudecode local state
+.omc
+.claude/state

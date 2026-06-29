@@ -2,6 +2,8 @@
   "name": "ccl-lens",
   "private": true,
   "version": "0.1.0",
+  "description": "Claude Code 流量透镜 —— 本地拦截代理 + Token/成本实时可观测",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

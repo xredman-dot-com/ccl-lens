@@ -1,0 +1,75 @@
+name: release
+
+# 触发方式：
+#   1. 推 tag（如 v0.1.0）→ 构建三平台包并发到一个 Draft Release
+#   2. 手动 Run workflow → 只构建，产物放在 Actions Artifacts 里下载
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon (M 芯片) → .dmg
+          - platform: macos-14
+            target: aarch64-apple-darwin
+          # Intel Mac → .dmg
+          - platform: macos-13
+            target: x86_64-apple-darwin
+          # Windows x64 → .exe (NSIS) + .msi (WiX)
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install frontend deps
+        run: pnpm install
+
+      - name: Build app (tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # 有 tag 时创建/更新 Draft Release；workflow_dispatch 无 tag 时这些值无害
+          tagName: ${{ github.ref_name }}
+          releaseName: ccl-lens ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      # 手动触发（无 tag）也能拿到产物
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccl-lens-${{ matrix.target }}
+          if-no-files-found: ignore
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi

@@ -1,4 +1,4 @@
-use crate::models::{ModelStat, RequestRecord, Stats};
+use crate::models::{DayStat, ModelStat, RequestRecord, Stats, Trends};
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
@@ -42,8 +42,34 @@ impl Store {
                 request_body TEXT,
                 response_text TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts DESC);",
+            CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts DESC);
+            CREATE TABLE IF NOT EXISTS day_stats (
+                day TEXT PRIMARY KEY,
+                requests INTEGER NOT NULL DEFAULT 0,
+                input INTEGER NOT NULL DEFAULT 0,
+                output INTEGER NOT NULL DEFAULT 0,
+                cache INTEGER NOT NULL DEFAULT 0,
+                cost REAL NOT NULL DEFAULT 0,
+                errors INTEGER NOT NULL DEFAULT 0
+            );",
         )?;
+
+        // Backfill the rollup once from existing detail rows. Safe because it
+        // only runs when empty; live inserts increment it from then on, and the
+        // detail-row prune never touches it (so trends outlive the 2000-row cap).
+        let day_rows: i64 = conn.query_row("SELECT COUNT(*) FROM day_stats", [], |r| r.get(0))?;
+        if day_rows == 0 {
+            conn.execute(
+                "INSERT INTO day_stats(day, requests, input, output, cache, cost, errors)
+                 SELECT date(ts/1000,'unixepoch','localtime'), COUNT(*),
+                        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+                        COALESCE(SUM(COALESCE(cache_read_tokens,0)+COALESCE(cache_creation_tokens,0)),0),
+                        COALESCE(SUM(cost_usd),0),
+                        COALESCE(SUM(CASE WHEN error IS NOT NULL OR status>=400 THEN 1 ELSE 0 END),0)
+                 FROM requests GROUP BY 1",
+                [],
+            )?;
+        }
         let _ = conn.execute(
             "ALTER TABLE requests ADD COLUMN request_bytes INTEGER NOT NULL DEFAULT 0",
             [],
@@ -94,6 +120,29 @@ impl Store {
                 r.response_text,
             ],
         )?;
+        // Accumulate the permanent per-day rollup (survives the detail prune).
+        let cache = r.cache_read_tokens.unwrap_or(0) + r.cache_creation_tokens.unwrap_or(0);
+        let is_err = (r.error.is_some() || r.status.map_or(false, |s| s >= 400)) as i64;
+        conn.execute(
+            "INSERT INTO day_stats(day, requests, input, output, cache, cost, errors)
+             VALUES (date(?1/1000,'unixepoch','localtime'), 1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(day) DO UPDATE SET
+                requests = requests + 1,
+                input = input + excluded.input,
+                output = output + excluded.output,
+                cache = cache + excluded.cache,
+                cost = cost + excluded.cost,
+                errors = errors + excluded.errors",
+            params![
+                r.ts,
+                r.input_tokens.unwrap_or(0) as i64,
+                r.output_tokens.unwrap_or(0) as i64,
+                cache as i64,
+                r.cost_usd.unwrap_or(0.0),
+                is_err,
+            ],
+        )?;
+
         conn.execute(
             "DELETE FROM requests WHERE ts < (
                 SELECT ts FROM requests ORDER BY ts DESC LIMIT 1 OFFSET ?1
@@ -264,9 +313,66 @@ impl Store {
         })
     }
 
+    /// Today / yesterday / last-7-day rollups (local time) plus the per-day
+    /// series, read from the permanent day_stats table.
+    pub fn trends(&self) -> Result<Trends> {
+        let conn = self.conn.lock().unwrap();
+        let agg = |cond: &str| -> Result<DayStat> {
+            let sql = format!(
+                "SELECT COALESCE(SUM(requests),0), COALESCE(SUM(input),0),
+                        COALESCE(SUM(output),0), COALESCE(SUM(cache),0),
+                        COALESCE(SUM(cost),0.0), COALESCE(SUM(errors),0)
+                 FROM day_stats WHERE {}",
+                cond
+            );
+            conn.query_row(&sql, [], |r| {
+                Ok(DayStat {
+                    day: String::new(),
+                    requests: r.get::<_, i64>(0)? as u64,
+                    input: r.get::<_, i64>(1)? as u64,
+                    output: r.get::<_, i64>(2)? as u64,
+                    cache: r.get::<_, i64>(3)? as u64,
+                    cost: r.get::<_, f64>(4)?,
+                    errors: r.get::<_, i64>(5)? as u64,
+                })
+            })
+            .map_err(Into::into)
+        };
+        let today = agg("day = date('now','localtime')")?;
+        let yesterday = agg("day = date('now','-1 day','localtime')")?;
+        let last7 = agg("day >= date('now','-6 days','localtime')")?;
+
+        let mut days = Vec::new();
+        let mut stmt = conn.prepare(
+            "SELECT day, requests, input, output, cache, cost, errors FROM day_stats
+             WHERE day >= date('now','-6 days','localtime') ORDER BY day ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(DayStat {
+                day: r.get(0)?,
+                requests: r.get::<_, i64>(1)? as u64,
+                input: r.get::<_, i64>(2)? as u64,
+                output: r.get::<_, i64>(3)? as u64,
+                cache: r.get::<_, i64>(4)? as u64,
+                cost: r.get::<_, f64>(5)?,
+                errors: r.get::<_, i64>(6)? as u64,
+            })
+        })?;
+        for d in rows {
+            days.push(d?);
+        }
+        Ok(Trends {
+            today,
+            yesterday,
+            last7,
+            days,
+        })
+    }
+
     pub fn clear(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM requests", [])?;
+        conn.execute("DELETE FROM day_stats", [])?;
         Ok(())
     }
 }

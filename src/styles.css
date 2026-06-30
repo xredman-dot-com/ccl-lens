@@ -1299,6 +1299,62 @@ code {
   white-space: pre-wrap;
 }
 
+/* Trend cards (today / yesterday / last 7 days) */
+.trend-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.trend-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.trend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.trend-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.trend-delta {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-3);
+}
+.trend-delta.up {
+  color: var(--green);
+}
+.trend-delta.down {
+  color: var(--red);
+}
+.trend-delta.flat {
+  color: var(--muted);
+}
+.trend-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.trend-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.trend-val {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.trend-val.bad {
+  color: var(--red);
+}
+
 /* Service status */
 .svc-dot {
   width: 8px;

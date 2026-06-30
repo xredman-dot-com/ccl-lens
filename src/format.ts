@@ -10,6 +10,17 @@ export function fmtCost(n: number | null | undefined): string {
   return "$" + n.toFixed(2);
 }
 
+/** Human-readable compact number: 2001 -> "2K", 131558 -> "131.6K", 1.47e8 -> "147.4M". */
+export function fmtCompact(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "—";
+  const abs = Math.abs(n);
+  const trim = (v: number) => v.toFixed(1).replace(/\.0$/, "");
+  if (abs >= 1e9) return trim(n / 1e9) + "B";
+  if (abs >= 1e6) return trim(n / 1e6) + "M";
+  if (abs >= 1e3) return trim(n / 1e3) + "K";
+  return String(n);
+}
+
 export function fmtMs(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   if (n < 1000) return n + "ms";

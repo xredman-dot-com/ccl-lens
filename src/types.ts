@@ -116,6 +116,23 @@ export interface TrafficSnapshot {
   session_response_bytes: number;
 }
 
+export interface DayStat {
+  day: string;
+  requests: number;
+  input: number;
+  output: number;
+  cache: number;
+  cost: number;
+  errors: number;
+}
+
+export interface Trends {
+  today: DayStat;
+  yesterday: DayStat;
+  last7: DayStat;
+  days: DayStat[];
+}
+
 export interface AccountInfo {
   email: string | null;
   display_name: string | null;

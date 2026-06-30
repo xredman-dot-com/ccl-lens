@@ -11,6 +11,7 @@ import type {
   TestResult,
   TunnelStatus,
   TrafficSnapshot,
+  Trends,
   UpstreamKind,
   Upstream,
   UpstreamView,
@@ -46,6 +47,7 @@ export const api = {
   getAccount: () => invoke<AccountInfo | null>("get_account"),
   getUsage: () => invoke<UsageSnapshot | null>("get_usage"),
   getServiceStatus: () => invoke<ServiceStatus>("get_service_status"),
+  getTrends: () => invoke<Trends>("get_trends"),
 };
 
 export function onRequest(cb: (r: RequestRecord) => void): Promise<UnlistenFn> {

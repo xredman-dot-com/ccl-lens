@@ -84,7 +84,8 @@ pub fn run() {
             commands::reorder_upstreams,
             commands::get_account,
             commands::get_usage,
-            commands::get_service_status
+            commands::get_service_status,
+            commands::get_trends
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

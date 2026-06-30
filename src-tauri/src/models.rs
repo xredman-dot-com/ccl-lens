@@ -161,6 +161,27 @@ pub struct Stats {
     pub by_model: Vec<ModelStat>,
 }
 
+/// One local-day rollup of usage, persisted permanently (independent of the
+/// capped detail history) so trends survive beyond the 2000-row detail window.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct DayStat {
+    pub day: String,
+    pub requests: u64,
+    pub input: u64,
+    pub output: u64,
+    pub cache: u64,
+    pub cost: f64,
+    pub errors: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Trends {
+    pub today: DayStat,
+    pub yesterday: DayStat,
+    pub last7: DayStat,
+    pub days: Vec<DayStat>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TrafficSnapshot {
     pub session_request_bytes: u64,

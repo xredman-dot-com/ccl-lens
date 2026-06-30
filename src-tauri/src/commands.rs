@@ -1,6 +1,6 @@
 use crate::models::{
-    kind_str, Health, RequestRecord, SelectMode, Stats, TakeoverMode, TestResult, TunnelStatus,
-    Upstream, UpstreamKind, UsageSnapshot,
+    kind_str, Health, RequestRecord, SelectMode, Stats, TakeoverMode, TestResult, Trends,
+    TunnelStatus, Upstream, UpstreamKind, UsageSnapshot,
 };
 use crate::state::AppState;
 use crate::upstream::{client_for, endpoint_of, probe_exit_ip, Pool};
@@ -367,6 +367,11 @@ pub fn get_stats(state: State<'_, AppState>, since_ts: Option<i64>) -> Result<St
 #[tauri::command]
 pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
     state.store.clear().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_trends(state: State<'_, AppState>) -> Result<Trends, String> {
+    state.store.trends().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

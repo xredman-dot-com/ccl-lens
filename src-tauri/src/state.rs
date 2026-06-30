@@ -1,5 +1,5 @@
 use crate::ca::CaAuthority;
-use crate::models::{SelectMode, TakeoverMode, TunnelStatus, Upstream};
+use crate::models::{SelectMode, TakeoverMode, TunnelStatus, Upstream, UsageSnapshot};
 use crate::proxy::ProxyHandle;
 use crate::store::Store;
 use crate::upstream::Pool;
@@ -93,6 +93,8 @@ pub struct AppState {
     pub tunnel: Arc<Mutex<TunnelStatus>>,
     pub traffic: Arc<TrafficMeter>,
     pub ca: Arc<CaAuthority>,
+    /// Latest quota snapshot captured from proxied `/api/oauth/usage` responses.
+    pub usage: Arc<Mutex<Option<UsageSnapshot>>>,
     shutdown_done: AtomicBool,
 }
 
@@ -139,6 +141,7 @@ impl AppState {
             tunnel,
             traffic,
             ca,
+            usage: Arc::new(Mutex::new(None)),
             shutdown_done: AtomicBool::new(false),
         })
     }

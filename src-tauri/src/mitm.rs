@@ -1,5 +1,5 @@
 use crate::ca::CaAuthority;
-use crate::models::{RequestRecord, TrafficSnapshot};
+use crate::models::{now_ms, RequestRecord, TrafficSnapshot, UsageSnapshot};
 use crate::pricing;
 use crate::state::TrafficMeter;
 use crate::store::Store;
@@ -14,7 +14,7 @@ use hyper::{HeaderMap, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use serde_json::Value;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::net::TcpStream;
@@ -62,6 +62,7 @@ pub struct MitmCtx {
     pub traffic: Arc<TrafficMeter>,
     pub app: AppHandle,
     pub ca: Arc<CaAuthority>,
+    pub usage: Arc<Mutex<Option<UsageSnapshot>>>,
 }
 
 type ResBody = BoxBody<Bytes, std::io::Error>;
@@ -175,6 +176,10 @@ async fn handle_request(ctx: Arc<MitmCtx>, host: Arc<String>, req: Request<Incom
     let status = resp.status();
     let resp_headers = resp.headers().clone();
 
+    // Capture the quota snapshot when this is Claude Code's own `/usage` call —
+    // the small JSON body fits entirely in `head`, so we parse it after the stream.
+    let is_usage = status == StatusCode::OK && path.starts_with("/api/oauth/usage");
+
     // Stream the body to the client while capturing it for parsing; finalize
     // the record when the stream ends (output tokens land in the last event).
     let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, std::io::Error>>(16);
@@ -238,6 +243,17 @@ async fn handle_request(ctx: Arc<MitmCtx>, host: Arc<String>, req: Request<Incom
         task_ctx.traffic.add_response(resp_bytes);
         let _ = task_ctx.store.insert(&rec);
         let _ = task_ctx.app.emit("request", &rec);
+
+        if is_usage {
+            if let Ok(v) = serde_json::from_slice::<Value>(&head) {
+                let snap = UsageSnapshot { captured_at: now_ms(), raw: v };
+                if let Ok(mut g) = task_ctx.usage.lock() {
+                    *g = Some(snap.clone());
+                }
+                let _ = task_ctx.app.emit("usage", &snap);
+            }
+        }
+
         let (up, down) = task_ctx.traffic.snapshot();
         let _ = task_ctx.app.emit(
             "traffic",

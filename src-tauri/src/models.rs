@@ -167,6 +167,15 @@ pub struct TrafficSnapshot {
     pub session_response_bytes: u64,
 }
 
+/// Latest `/api/oauth/usage` response captured passively as it flows through the
+/// MITM proxy (Claude Code's own `/usage` data — real-time quota, not computed).
+/// `raw` is the verbatim JSON so the UI can render whatever windows it returns.
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageSnapshot {
+    pub captured_at: i64,
+    pub raw: serde_json::Value,
+}
+
 /// How ccl-lens routes Claude Code through the local HTTP proxy.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]

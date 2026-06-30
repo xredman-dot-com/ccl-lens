@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AccountInfo,
   AppStateView,
   RequestRecord,
+  ServiceStatus,
   Stats,
   SelectMode,
   TakeoverMode,
@@ -12,6 +14,7 @@ import type {
   UpstreamKind,
   Upstream,
   UpstreamView,
+  UsageSnapshot,
 } from "./types";
 
 export const api = {
@@ -40,6 +43,9 @@ export const api = {
     invoke<Stats>("get_stats", { sinceTs: sinceTs ?? null }),
   clearHistory: () => invoke<void>("clear_history"),
   probeNow: () => invoke<AppStateView>("probe_now"),
+  getAccount: () => invoke<AccountInfo | null>("get_account"),
+  getUsage: () => invoke<UsageSnapshot | null>("get_usage"),
+  getServiceStatus: () => invoke<ServiceStatus>("get_service_status"),
 };
 
 export function onRequest(cb: (r: RequestRecord) => void): Promise<UnlistenFn> {
@@ -60,4 +66,8 @@ export function onTraffic(cb: (t: TrafficSnapshot) => void): Promise<UnlistenFn>
 
 export function onState(cb: (s: AppStateView) => void): Promise<UnlistenFn> {
   return listen<AppStateView>("state", (e) => cb(e.payload));
+}
+
+export function onUsage(cb: (u: UsageSnapshot) => void): Promise<UnlistenFn> {
+  return listen<UsageSnapshot>("usage", (e) => cb(e.payload));
 }

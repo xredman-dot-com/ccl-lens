@@ -1,3 +1,4 @@
+mod account;
 mod ca;
 mod claude;
 mod commands;
@@ -80,7 +81,10 @@ pub fn run() {
             commands::get_stats,
             commands::clear_history,
             commands::probe_now,
-            commands::reorder_upstreams
+            commands::reorder_upstreams,
+            commands::get_account,
+            commands::get_usage,
+            commands::get_service_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

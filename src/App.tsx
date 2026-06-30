@@ -14,6 +14,7 @@ import { Upstreams } from "./components/Upstreams";
 import { Settings } from "./components/Settings";
 import { Timeline } from "./components/Timeline";
 import { StatsPanel } from "./components/Stats";
+import { AccountPanel } from "./components/AccountPanel";
 import { RequestDetail } from "./components/RequestDetail";
 
 const MAX_ROWS = 500;
@@ -29,7 +30,7 @@ export default function App() {
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [tab, setTab] = useState<"timeline" | "stats">("timeline");
+  const [tab, setTab] = useState<"timeline" | "stats" | "account">("timeline");
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem("ccl-theme");
     return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
@@ -203,7 +204,7 @@ export default function App() {
     api.getStats(statsSinceRef.current).then(setStats);
   };
 
-  const showDetail = selectedId !== null;
+  const showDetail = tab === "timeline" && selectedId !== null;
   const gridCols = showDetail
     ? `${sidebarWidth}px 4px 1fr 4px ${detailWidth}px`
     : `${sidebarWidth}px 4px 1fr`;
@@ -248,6 +249,12 @@ export default function App() {
             >
               统计
             </button>
+            <button
+              className={tab === "account" ? "tab on" : "tab"}
+              onClick={() => setTab("account")}
+            >
+              账号
+            </button>
             <span className="grow" />
             <span className="muted small">{requests.length} 条</span>
           </div>
@@ -258,7 +265,7 @@ export default function App() {
               selectedId={selectedId}
               onSelect={(r) => setSelectedId(r.id)}
             />
-          ) : (
+          ) : tab === "stats" ? (
             <StatsPanel
               stats={stats}
               traffic={traffic}
@@ -267,6 +274,8 @@ export default function App() {
               onSinceChange={setStatsSince}
               onClear={clearHistory}
             />
+          ) : (
+            <AccountPanel />
           )}
         </main>
 
@@ -274,7 +283,7 @@ export default function App() {
           <div className="resize-handle" onMouseDown={onResizeDown("detail")} />
         )}
         <RequestDetail
-          id={selectedId}
+          id={showDetail ? selectedId : null}
           width={detailWidth}
           onClose={() => setSelectedId(null)}
         />

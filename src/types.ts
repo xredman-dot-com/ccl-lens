@@ -115,3 +115,34 @@ export interface TrafficSnapshot {
   session_request_bytes: number;
   session_response_bytes: number;
 }
+
+export interface AccountInfo {
+  email: string | null;
+  display_name: string | null;
+  organization_name: string | null;
+  organization_type: string | null;
+  organization_role: string | null;
+  billing_type: string | null;
+  account_created_at: string | null;
+  subscription_created_at: string | null;
+  rate_limit_tier: string | null;
+  has_extra_usage_enabled: boolean | null;
+}
+
+export interface UsageSnapshot {
+  captured_at: number;
+  // verbatim /api/oauth/usage payload; shape varies, rendered generically
+  raw: Record<string, unknown>;
+}
+
+export interface ServiceComponent {
+  name: string;
+  status: string;
+}
+
+export interface ServiceStatus {
+  indicator: string | null;
+  description: string | null;
+  components: ServiceComponent[];
+  incidents: string[];
+}

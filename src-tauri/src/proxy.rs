@@ -1,11 +1,11 @@
 use crate::ca::CaAuthority;
 use crate::mitm::{self, MitmCtx};
-use crate::models::{RequestRecord, UpstreamKind};
+use crate::models::{RequestRecord, UpstreamKind, UsageSnapshot};
 use crate::state::TrafficMeter;
 use crate::store::Store;
 use crate::upstream::Pool;
 use base64::Engine;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
@@ -31,6 +31,7 @@ struct ProxyCtx {
     traffic: Arc<TrafficMeter>,
     app: AppHandle,
     ca: Arc<CaAuthority>,
+    usage: Arc<Mutex<Option<UsageSnapshot>>>,
 }
 
 impl ProxyCtx {
@@ -41,6 +42,7 @@ impl ProxyCtx {
             traffic: self.traffic.clone(),
             app: self.app.clone(),
             ca: self.ca.clone(),
+            usage: self.usage.clone(),
         }
     }
 }
@@ -51,6 +53,7 @@ pub async fn start(
     traffic: Arc<TrafficMeter>,
     app: AppHandle,
     ca: Arc<CaAuthority>,
+    usage: Arc<Mutex<Option<UsageSnapshot>>>,
     port: u16,
 ) -> anyhow::Result<ProxyHandle> {
     let listener = TcpListener::bind(("127.0.0.1", port)).await?;
@@ -60,6 +63,7 @@ pub async fn start(
         traffic,
         app,
         ca,
+        usage,
     };
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {

@@ -1,6 +1,6 @@
 use crate::models::{
     kind_str, Health, RequestRecord, SelectMode, Stats, TakeoverMode, TestResult, TunnelStatus,
-    Upstream, UpstreamKind,
+    Upstream, UpstreamKind, UsageSnapshot,
 };
 use crate::state::AppState;
 use crate::upstream::{client_for, endpoint_of, probe_exit_ip, Pool};
@@ -119,6 +119,7 @@ pub async fn start_intercept(
             state.traffic.clone(),
             app.clone(),
             state.ca.clone(),
+            state.usage.clone(),
             port,
         )
         .await
@@ -372,6 +373,90 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 pub fn probe_now(app: AppHandle, state: State<'_, AppState>) -> AppStateView {
     spawn_probe(app, state.pool.clone());
     build_view(&state)
+}
+
+/// Claude account profile, read locally from `~/.claude.json` (no network).
+#[tauri::command]
+pub fn get_account() -> Option<crate::account::AccountInfo> {
+    crate::account::read_account()
+}
+
+/// Latest real-time quota captured from proxied `/api/oauth/usage` responses.
+/// `None` until Claude Code calls it (e.g. the user runs `/usage`).
+#[tauri::command]
+pub fn get_usage(state: State<'_, AppState>) -> Option<UsageSnapshot> {
+    state.usage.lock().unwrap().clone()
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceComponent {
+    pub name: String,
+    pub status: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ServiceStatus {
+    pub indicator: Option<String>,
+    pub description: Option<String>,
+    pub components: Vec<ServiceComponent>,
+    pub incidents: Vec<String>,
+}
+
+/// Claude / Anthropic service status from the public Statuspage summary
+/// (no auth). Routed through the active upstream so it works behind the GFW.
+#[tauri::command]
+pub async fn get_service_status(state: State<'_, AppState>) -> Result<ServiceStatus, String> {
+    let client = state
+        .pool
+        .select()
+        .map(|s| s.client)
+        .unwrap_or_else(reqwest::Client::new);
+    let resp = client
+        .get("https://status.claude.com/api/v2/summary.json")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let v: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let indicator = v
+        .pointer("/status/indicator")
+        .and_then(|x| x.as_str())
+        .map(String::from);
+    let description = v
+        .pointer("/status/description")
+        .and_then(|x| x.as_str())
+        .map(String::from);
+    let components = v
+        .get("components")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|c| !c.get("group").and_then(|g| g.as_bool()).unwrap_or(false))
+                .filter_map(|c| {
+                    Some(ServiceComponent {
+                        name: c.get("name")?.as_str()?.to_string(),
+                        status: c.get("status")?.as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let incidents = v
+        .get("incidents")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|i| i.get("name")?.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(ServiceStatus {
+        indicator,
+        description,
+        components,
+        incidents,
+    })
 }
 
 #[tauri::command]

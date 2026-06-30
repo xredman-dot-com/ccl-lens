@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DayStat, Stats, TrafficSnapshot, Trends } from "../types";
 import { api } from "../api";
-import { fmtBytes, fmtCompact, fmtCost, fmtNum, shortModel } from "../format";
+import { fmtBytes, fmtCny, fmtCompact, fmtCost, fmtNum, shortModel } from "../format";
 
 interface Props {
   stats: Stats | null;
@@ -71,7 +71,7 @@ export function StatsPanel({
         <Card label="输入 Token" value={fmtCompact(stats.total_input)} title={fmtNum(stats.total_input)} />
         <Card label="输出 Token" value={fmtCompact(stats.total_output)} title={fmtNum(stats.total_output)} />
         <Card label="缓存 Token" value={fmtCompact(cacheTotal)} title={fmtNum(cacheTotal)} />
-        <Card label="总成本" value={fmtCost(stats.total_cost)} accent />
+        <Card label="总成本" value={fmtCost(stats.total_cost)} sub={fmtCny(stats.total_cost)} accent />
         <Card label="异常" value={fmtNum(stats.errors)} warn={stats.errors > 0} />
       </div>
 
@@ -152,16 +152,19 @@ function Card({
   accent,
   warn,
   title,
+  sub,
 }: {
   label: string;
   value: string;
   accent?: boolean;
   warn?: boolean;
   title?: string;
+  sub?: string;
 }) {
   return (
     <div className={"card" + (accent ? " accent" : "") + (warn ? " warn" : "")} title={title}>
       <div className="card-value">{value}</div>
+      {sub && <div className="card-sub">{sub}</div>}
       <div className="card-label">{label}</div>
     </div>
   );

@@ -10,15 +10,23 @@ export function fmtCost(n: number | null | undefined): string {
   return "$" + n.toFixed(2);
 }
 
-/** Human-readable compact number: 2001 -> "2K", 131558 -> "131.6K", 1.47e8 -> "147.4M". */
+/** Human-readable number in Chinese units: 144400000 -> "1.44亿", 626300 -> "62.6万". */
 export function fmtCompact(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   const abs = Math.abs(n);
-  const trim = (v: number) => v.toFixed(1).replace(/\.0$/, "");
-  if (abs >= 1e9) return trim(n / 1e9) + "B";
-  if (abs >= 1e6) return trim(n / 1e6) + "M";
-  if (abs >= 1e3) return trim(n / 1e3) + "K";
-  return String(n);
+  const strip = (s: string) => s.replace(/\.?0+$/, "");
+  if (abs >= 1e8) return strip((n / 1e8).toFixed(2)) + "亿";
+  if (abs >= 1e4) return strip((n / 1e4).toFixed(1)) + "万";
+  return Math.round(n).toLocaleString("en-US");
+}
+
+/** Approximate USD->CNY for a secondary, at-a-glance figure. */
+const USD_CNY = 7.2;
+
+export function fmtCny(usd: number | null | undefined): string {
+  if (usd === null || usd === undefined) return "—";
+  const v = usd * USD_CNY;
+  return "≈ ¥" + v.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 
 export function fmtMs(n: number | null | undefined): string {

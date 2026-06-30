@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ServiceStatus } from "../types";
 import {
-  combineNotices,
+  ccComponents,
+  ccNotices,
   fmtAgo,
   impactLabel,
   noticeUrl,
   severity,
+  shortComponent,
   statusLabel,
 } from "../status";
 
@@ -18,8 +20,15 @@ interface Props {
 
 const ROTATE_MS = 7000;
 
+function compDot(status: string): string {
+  if (status === "operational") return "sb-dot op";
+  if (status === "major_outage" || status === "critical") return "sb-dot down";
+  return "sb-dot warn";
+}
+
 export function StatusBar({ status, busy, onRefresh }: Props) {
-  const notices = combineNotices(status);
+  const notices = ccNotices(status);
+  const comps = ccComponents(status);
   const [idx, setIdx] = useState(0);
 
   // Keep index in range as the notice set changes.
@@ -48,27 +57,37 @@ export function StatusBar({ status, busy, onRefresh }: Props) {
 
   return (
     <footer className={"statusbar" + (sev ? " " + sev : "")}>
-      <span className={"sb-dot " + (cur ? sev || "info" : "op")} />
-
       {cur ? (
-        <button
-          className="sb-msg"
-          onClick={open}
-          disabled={!url}
-          title={url ? `${cur.name}（点击查看详情）` : cur.name}
-        >
-          <span className="sb-badge">{cur.maint ? "维护" : impactLabel(cur.impact)}</span>
-          <span className="sb-name">{cur.name}</span>
-          {cur.affected.length > 0 && (
-            <span className="sb-affected">影响：{cur.affected.join("、")}</span>
-          )}
-          <span className="sb-state">{statusLabel(cur.status)}</span>
-          {ago && <span className="sb-ago">{ago}</span>}
-        </button>
+        <>
+          <span className={"sb-dot " + (sev || "info")} />
+          <button
+            className="sb-msg"
+            onClick={open}
+            disabled={!url}
+            title={url ? `${cur.name}（点击查看详情）` : cur.name}
+          >
+            <span className="sb-badge">{cur.maint ? "维护" : impactLabel(cur.impact)}</span>
+            <span className="sb-name">{cur.name}</span>
+            {cur.affected.length > 0 && (
+              <span className="sb-affected">
+                影响：{cur.affected.map(shortComponent).join("、")}
+              </span>
+            )}
+            <span className="sb-state">{statusLabel(cur.status)}</span>
+            {ago && <span className="sb-ago">{ago}</span>}
+          </button>
+        </>
+      ) : comps.length > 0 ? (
+        <div className="sb-comps">
+          {comps.map((c) => (
+            <span className="sb-comp" key={c.name}>
+              <span className={compDot(c.status)} />
+              <span>{shortComponent(c.name)}</span>
+            </span>
+          ))}
+        </div>
       ) : (
-        <span className="sb-ok">
-          {status?.description ?? (busy ? "正在获取服务状态…" : "服务状态未知")}
-        </span>
+        <span className="sb-ok">{busy ? "正在获取服务状态…" : "服务状态未知"}</span>
       )}
 
       <span className="sb-spacer" />

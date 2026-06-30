@@ -17,7 +17,6 @@ import { Upstreams } from "./components/Upstreams";
 import { Settings } from "./components/Settings";
 import { Timeline } from "./components/Timeline";
 import { StatsPanel } from "./components/Stats";
-import { AccountPanel } from "./components/AccountPanel";
 import { StatusBar } from "./components/StatusBar";
 import { RequestDetail } from "./components/RequestDetail";
 
@@ -34,12 +33,11 @@ export default function App() {
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [tab, setTab] = useState<"timeline" | "stats" | "account">("timeline");
+  const [tab, setTab] = useState<"timeline" | "stats">("timeline");
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [svcStatus, setSvcStatus] = useState<ServiceStatus | null>(null);
   const [svcBusy, setSvcBusy] = useState(false);
-  const [svcErr, setSvcErr] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem("ccl-theme");
     return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
@@ -105,11 +103,10 @@ export default function App() {
 
   const loadStatus = () => {
     setSvcBusy(true);
-    setSvcErr(null);
     api
       .getServiceStatus()
       .then(setSvcStatus)
-      .catch((e) => setSvcErr(String(e)))
+      .catch(() => {})
       .finally(() => setSvcBusy(false));
   };
 
@@ -287,12 +284,6 @@ export default function App() {
             >
               统计
             </button>
-            <button
-              className={tab === "account" ? "tab on" : "tab"}
-              onClick={() => setTab("account")}
-            >
-              账号
-            </button>
             <span className="grow" />
             <span className="muted small">{requests.length} 条</span>
           </div>
@@ -303,7 +294,7 @@ export default function App() {
               selectedId={selectedId}
               onSelect={(r) => setSelectedId(r.id)}
             />
-          ) : tab === "stats" ? (
+          ) : (
             <StatsPanel
               stats={stats}
               traffic={traffic}
@@ -311,13 +302,6 @@ export default function App() {
               sinceTs={statsSince}
               onSinceChange={setStatsSince}
               onClear={clearHistory}
-            />
-          ) : (
-            <AccountPanel
-              status={svcStatus}
-              statusBusy={svcBusy}
-              statusErr={svcErr}
-              onRefreshStatus={loadStatus}
             />
           )}
         </main>

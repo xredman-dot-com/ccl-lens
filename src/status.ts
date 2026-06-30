@@ -1,7 +1,31 @@
-import type { ServiceIncident, ServiceStatus } from "./types";
+import type { ServiceComponent, ServiceIncident, ServiceStatus } from "./types";
 
 export interface Notice extends ServiceIncident {
   maint: boolean;
+}
+
+// Only the services Claude Code actually depends on.
+const CC_KEYS = ["claude code", "api.anthropic.com", "claude api"];
+
+export function isCCRelevant(name: string): boolean {
+  const n = name.toLowerCase();
+  return CC_KEYS.some((k) => n.includes(k));
+}
+
+/** "Claude API (api.anthropic.com)" -> "Claude API" */
+export function shortComponent(name: string): string {
+  return name.replace(/\s*\(.*\)\s*$/, "").trim();
+}
+
+export function ccComponents(status: ServiceStatus | null): ServiceComponent[] {
+  return status?.components.filter((c) => isCCRelevant(c.name)) ?? [];
+}
+
+/** Notices that are global (no affected list) or touch a Claude Code service. */
+export function ccNotices(status: ServiceStatus | null): Notice[] {
+  return combineNotices(status).filter(
+    (n) => n.affected.length === 0 || n.affected.some((a) => isCCRelevant(a))
+  );
 }
 
 export const IMPACT_LABELS: Record<string, string> = {

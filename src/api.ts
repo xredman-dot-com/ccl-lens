@@ -48,6 +48,7 @@ export const api = {
   getUsage: () => invoke<UsageSnapshot | null>("get_usage"),
   getServiceStatus: () => invoke<ServiceStatus>("get_service_status"),
   getTrends: () => invoke<Trends>("get_trends"),
+  getExchangeRate: () => invoke<number>("get_exchange_rate"),
 };
 
 export function onRequest(cb: (r: RequestRecord) => void): Promise<UnlistenFn> {

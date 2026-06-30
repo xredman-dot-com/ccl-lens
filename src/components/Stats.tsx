@@ -33,11 +33,17 @@ export function StatsPanel({
   onClear,
 }: Props) {
   const [trends, setTrends] = useState<Trends | null>(null);
+  const [rate, setRate] = useState(7.2);
 
   // Refetch trends whenever stats refresh (a new request landed) or on mount.
   useEffect(() => {
     api.getTrends().then(setTrends).catch(() => {});
   }, [stats]);
+
+  // Live USD->CNY rate, fetched once (falls back to 7.2 until it lands).
+  useEffect(() => {
+    api.getExchangeRate().then(setRate).catch(() => {});
+  }, []);
 
   if (!stats) return null;
   const cacheTotal = stats.total_cache_read + stats.total_cache_creation;
@@ -71,7 +77,13 @@ export function StatsPanel({
         <Card label="输入 Token" value={fmtCompact(stats.total_input)} title={fmtNum(stats.total_input)} />
         <Card label="输出 Token" value={fmtCompact(stats.total_output)} title={fmtNum(stats.total_output)} />
         <Card label="缓存 Token" value={fmtCompact(cacheTotal)} title={fmtNum(cacheTotal)} />
-        <Card label="总成本" value={fmtCost(stats.total_cost)} sub={fmtCny(stats.total_cost)} accent />
+        <Card
+          label="总成本"
+          value={fmtCost(stats.total_cost)}
+          sub={fmtCny(stats.total_cost, rate)}
+          title={`USD→CNY ${rate.toFixed(2)}`}
+          accent
+        />
         <Card label="异常" value={fmtNum(stats.errors)} warn={stats.errors > 0} />
       </div>
 

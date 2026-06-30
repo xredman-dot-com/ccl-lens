@@ -374,6 +374,27 @@ pub fn get_trends(state: State<'_, AppState>) -> Result<Trends, String> {
     state.store.trends().map_err(|e| e.to_string())
 }
 
+/// Live USD->CNY rate (free, no auth), routed through the active upstream.
+#[tauri::command]
+pub async fn get_exchange_rate(state: State<'_, AppState>) -> Result<f64, String> {
+    let client = state
+        .pool
+        .select()
+        .map(|s| s.client)
+        .unwrap_or_else(reqwest::Client::new);
+    let resp = client
+        .get("https://open.er-api.com/v6/latest/USD")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let v: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    v.pointer("/rates/CNY")
+        .and_then(|x| x.as_f64())
+        .ok_or_else(|| "未取到 CNY 汇率".to_string())
+}
+
 #[tauri::command]
 pub fn probe_now(app: AppHandle, state: State<'_, AppState>) -> AppStateView {
     spawn_probe(app, state.pool.clone());

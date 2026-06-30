@@ -20,12 +20,10 @@ export function fmtCompact(n: number | null | undefined): string {
   return Math.round(n).toLocaleString("en-US");
 }
 
-/** Approximate USD->CNY for a secondary, at-a-glance figure. */
-const USD_CNY = 7.2;
-
-export function fmtCny(usd: number | null | undefined): string {
+/** Secondary at-a-glance CNY figure; `rate` is the live USD->CNY rate. */
+export function fmtCny(usd: number | null | undefined, rate: number): string {
   if (usd === null || usd === undefined) return "—";
-  const v = usd * USD_CNY;
+  const v = usd * rate;
   return "≈ ¥" + v.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 

@@ -314,8 +314,6 @@ export default function App() {
             />
           ) : (
             <AccountPanel
-              account={account}
-              usage={usage}
               status={svcStatus}
               statusBusy={svcBusy}
               statusErr={svcErr}

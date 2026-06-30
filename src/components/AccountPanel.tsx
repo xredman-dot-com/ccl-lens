@@ -1,7 +1,4 @@
-import type { AccountInfo, ServiceIncident, ServiceStatus, UsageSnapshot } from "../types";
-import { fmtTime } from "../format";
-import { parseWindows, usageLevel } from "../usage";
-import { roleLabel } from "../account";
+import type { ServiceIncident, ServiceStatus } from "../types";
 import { fmtAgo, impactLabel, severity, statusLabel } from "../status";
 
 function dotClass(status: string): string {
@@ -29,80 +26,15 @@ function IncidentCard({ inc, maint }: { inc: ServiceIncident; maint?: boolean })
 }
 
 interface Props {
-  account: AccountInfo | null;
-  usage: UsageSnapshot | null;
   status: ServiceStatus | null;
   statusBusy: boolean;
   statusErr: string | null;
   onRefreshStatus: () => void;
 }
 
-export function AccountPanel({
-  account,
-  usage,
-  status,
-  statusBusy,
-  statusErr,
-  onRefreshStatus,
-}: Props) {
-  const windows = parseWindows(usage);
-
+export function AccountPanel({ status, statusBusy, statusErr, onRefreshStatus }: Props) {
   return (
     <div className="account-panel">
-      <section className="panel">
-        <div className="panel-head">
-          <h2>账号信息</h2>
-          <span className="muted small">读取本地 ~/.claude.json</span>
-        </div>
-        {account ? (
-          <div className="conn-rows">
-            <Row k="组织" v={account.organization_name ?? "—"} />
-            <Row k="角色" v={roleLabel(account.organization_role)} />
-            <Row k="限流档" v={account.rate_limit_tier ?? "—"} />
-            <Row
-              k="额外用量"
-              v={account.has_extra_usage_enabled == null ? "—" : account.has_extra_usage_enabled ? "已开启" : "未开启"}
-            />
-          </div>
-        ) : (
-          <p className="muted small">未找到账号信息（Claude Code 是否已登录？）</p>
-        )}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>实时配额</h2>
-          <span className="muted small">
-            {usage ? `捕获于 ${fmtTime(usage.captured_at)}` : "来自 /api/oauth/usage"}
-          </span>
-        </div>
-        {windows.length > 0 ? (
-          <div className="usage-list">
-            {windows.map((w) => (
-              <div className="usage-item" key={w.key}>
-                <div className="usage-row">
-                  <span className="usage-label">{w.label}</span>
-                  <span className="usage-pct">{w.pct.toFixed(0)}%</span>
-                </div>
-                <div className="usage-bar">
-                  <div
-                    className={"usage-fill " + usageLevel(w.pct)}
-                    style={{ width: `${w.pct}%` }}
-                  />
-                </div>
-                {w.reset && <span className="muted small">{w.reset}</span>}
-              </div>
-            ))}
-          </div>
-        ) : usage ? (
-          <pre className="usage-raw">{JSON.stringify(usage.raw, null, 2)}</pre>
-        ) : (
-          <p className="muted small">
-            尚未捕获。在 Claude Code 中运行 <code>/usage</code> 后，这里会显示实时配额。
-          </p>
-        )}
-      </section>
-
       <section className="panel">
         <div className="panel-head">
           <h2>服务状态与公告</h2>
@@ -110,6 +42,7 @@ export function AccountPanel({
             {statusBusy ? "刷新中" : "刷新"}
           </button>
         </div>
+        <p className="muted small">账号与实时配额已移至顶部栏（悬停查看详情）。</p>
         {statusErr ? (
           <p className="muted small bad">{statusErr}</p>
         ) : status ? (
@@ -144,15 +77,6 @@ export function AccountPanel({
           <p className="muted small">加载中…</p>
         )}
       </section>
-    </div>
-  );
-}
-
-function Row({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
-  return (
-    <div className="conn-row">
-      <span className="muted">{k}</span>
-      <span className={"conn-val" + (strong ? " strong" : "")}>{v}</span>
     </div>
   );
 }

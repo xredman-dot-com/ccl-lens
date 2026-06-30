@@ -1397,6 +1397,7 @@ code {
 
 /* Header account chip — always-visible identity across tabs */
 .hacct {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1607,10 +1608,78 @@ code {
 
 /* Header quota strip — always-visible quota across tabs */
 .hq {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 0 14px;
+}
+.hq-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Header hover popovers (account details / full quota) */
+.hpop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  display: none;
+  z-index: 50;
+}
+.hacct:hover .hpop,
+.hq:hover .hpop {
+  display: block;
+}
+.hpop-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.hpop-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.hqp-item {
+  margin-top: 8px;
+}
+.hqp-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.hqp-pct {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hqp-bar {
+  height: 5px;
+  background: var(--bg-3);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 3px 0;
+}
+.hqp-bar i {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+}
+.hqp-bar i.mid {
+  background: var(--yellow);
+}
+.hqp-bar i.high {
+  background: var(--red);
 }
 .hq-item {
   display: flex;

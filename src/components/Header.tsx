@@ -1,6 +1,7 @@
 import type { AccountInfo, AppStateView, TunnelStatus, UsageSnapshot } from "../types";
 import { parseWindows, usageLevel } from "../usage";
-import { planLabel } from "../account";
+import { planLabel, roleLabel } from "../account";
+import { fmtTime } from "../format";
 
 interface Props {
   state: AppStateView | null;
@@ -16,8 +17,16 @@ export function Header({ state, tunnel, account, usage, theme, onThemeChange }: 
   const port = state?.port ?? 31415;
   const proxy = state?.claude_proxy ?? null;
   const interceptOn = !!proxy && proxy.includes(String(port));
-  const windows = parseWindows(usage).slice(0, 4);
+  const windows = parseWindows(usage);
   const acctName = account?.display_name || account?.email || null;
+  const capturedAt = usage ? fmtTime(usage.captured_at) : null;
+
+  const extraUsage =
+    account?.has_extra_usage_enabled == null
+      ? "—"
+      : account.has_extra_usage_enabled
+        ? "已开启"
+        : "未开启";
 
   return (
     <header className="header">
@@ -38,12 +47,18 @@ export function Header({ state, tunnel, account, usage, theme, onThemeChange }: 
           {account?.organization_type && (
             <span className="hacct-plan">{planLabel(account.organization_type)}</span>
           )}
+          <div className="hpop">
+            <PopRow k="组织" v={account?.organization_name ?? "—"} />
+            <PopRow k="角色" v={roleLabel(account?.organization_role ?? null)} />
+            <PopRow k="限流档" v={account?.rate_limit_tier ?? "—"} />
+            <PopRow k="额外用量" v={extraUsage} />
+          </div>
         </div>
       )}
 
       {windows.length > 0 && (
-        <div className="hq" title="实时配额（来自 Claude Code /usage）">
-          {windows.map((w) => (
+        <div className="hq">
+          {windows.slice(0, 3).map((w) => (
             <span className="hq-item" key={w.key}>
               <span className="hq-label">{w.shortLabel}</span>
               <span className="hq-bar">
@@ -52,6 +67,22 @@ export function Header({ state, tunnel, account, usage, theme, onThemeChange }: 
               <span className="hq-pct">{w.pct.toFixed(0)}%</span>
             </span>
           ))}
+          {capturedAt && <span className="hq-time">{capturedAt}</span>}
+          <div className="hpop hq-pop">
+            <div className="hpop-head">实时配额{capturedAt ? ` · 捕获于 ${capturedAt}` : ""}</div>
+            {windows.map((w) => (
+              <div className="hqp-item" key={w.key}>
+                <div className="hqp-row">
+                  <span>{w.label}</span>
+                  <span className="hqp-pct">{w.pct.toFixed(0)}%</span>
+                </div>
+                <div className="hqp-bar">
+                  <i className={usageLevel(w.pct)} style={{ width: `${w.pct}%` }} />
+                </div>
+                {w.reset && <span className="muted small">{w.reset}</span>}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -68,5 +99,14 @@ export function Header({ state, tunnel, account, usage, theme, onThemeChange }: 
         </select>
       </label>
     </header>
+  );
+}
+
+function PopRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="hpop-row">
+      <span className="muted">{k}</span>
+      <span>{v}</span>
+    </div>
   );
 }

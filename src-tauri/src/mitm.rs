@@ -250,6 +250,7 @@ async fn handle_request(ctx: Arc<MitmCtx>, host: Arc<String>, req: Request<Incom
                 if let Ok(mut g) = task_ctx.usage.lock() {
                     *g = Some(snap.clone());
                 }
+                crate::state::save_usage(&snap);
                 let _ = task_ctx.app.emit("usage", &snap);
             }
         }

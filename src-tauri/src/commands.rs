@@ -394,12 +394,60 @@ pub struct ServiceComponent {
     pub status: String,
 }
 
+/// An active incident or scheduled maintenance from the status page — the
+/// official notice ("Sonnet experiencing elevated errors", etc.).
+#[derive(Serialize, Clone)]
+pub struct ServiceIncident {
+    pub name: String,
+    pub impact: String,
+    pub status: String,
+    pub affected: Vec<String>,
+    pub updated_at: Option<String>,
+    pub latest_update: Option<String>,
+    pub url: Option<String>,
+}
+
 #[derive(Serialize, Clone)]
 pub struct ServiceStatus {
     pub indicator: Option<String>,
     pub description: Option<String>,
     pub components: Vec<ServiceComponent>,
-    pub incidents: Vec<String>,
+    pub incidents: Vec<ServiceIncident>,
+    pub maintenances: Vec<ServiceIncident>,
+}
+
+fn parse_incident(i: &Value) -> Option<ServiceIncident> {
+    let name = i.get("name")?.as_str()?.to_string();
+    Some(ServiceIncident {
+        name,
+        impact: i
+            .get("impact")
+            .and_then(|x| x.as_str())
+            .unwrap_or("none")
+            .to_string(),
+        status: i
+            .get("status")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        affected: i
+            .get("components")
+            .and_then(|c| c.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|c| c.get("name")?.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        updated_at: i.get("updated_at").and_then(|x| x.as_str()).map(String::from),
+        // incident_updates is newest-first; surface the latest official message.
+        latest_update: i
+            .get("incident_updates")
+            .and_then(|u| u.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|u| u.get("body")?.as_str().map(String::from)),
+        url: i.get("shortlink").and_then(|x| x.as_str()).map(String::from),
+    })
 }
 
 /// Claude / Anthropic service status from the public Statuspage summary
@@ -445,17 +493,19 @@ pub async fn get_service_status(state: State<'_, AppState>) -> Result<ServiceSta
     let incidents = v
         .get("incidents")
         .and_then(|c| c.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|i| i.get("name")?.as_str().map(String::from))
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(parse_incident).collect())
+        .unwrap_or_default();
+    let maintenances = v
+        .get("scheduled_maintenances")
+        .and_then(|c| c.as_array())
+        .map(|arr| arr.iter().filter_map(parse_incident).collect())
         .unwrap_or_default();
     Ok(ServiceStatus {
         indicator,
         description,
         components,
         incidents,
+        maintenances,
     })
 }
 

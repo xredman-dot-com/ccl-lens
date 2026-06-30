@@ -170,7 +170,7 @@ pub struct TrafficSnapshot {
 /// Latest `/api/oauth/usage` response captured passively as it flows through the
 /// MITM proxy (Claude Code's own `/usage` data — real-time quota, not computed).
 /// `raw` is the verbatim JSON so the UI can render whatever windows it returns.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageSnapshot {
     pub captured_at: i64,
     pub raw: serde_json::Value,

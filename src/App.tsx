@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  AccountInfo,
   AppStateView,
   RequestRecord,
+  ServiceStatus,
   Stats,
   TakeoverMode,
   TrafficSnapshot,
   TunnelStatus,
+  UsageSnapshot,
 } from "./types";
-import { api, onHealth, onRequest, onState, onTraffic, onTunnel } from "./api";
+import { api, onHealth, onRequest, onState, onTraffic, onTunnel, onUsage } from "./api";
 import { Header } from "./components/Header";
 import { Connection } from "./components/Connection";
 import { Upstreams } from "./components/Upstreams";
@@ -15,6 +18,7 @@ import { Settings } from "./components/Settings";
 import { Timeline } from "./components/Timeline";
 import { StatsPanel } from "./components/Stats";
 import { AccountPanel } from "./components/AccountPanel";
+import { StatusBar } from "./components/StatusBar";
 import { RequestDetail } from "./components/RequestDetail";
 
 const MAX_ROWS = 500;
@@ -31,6 +35,11 @@ export default function App() {
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [tab, setTab] = useState<"timeline" | "stats" | "account">("timeline");
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [svcStatus, setSvcStatus] = useState<ServiceStatus | null>(null);
+  const [svcBusy, setSvcBusy] = useState(false);
+  const [svcErr, setSvcErr] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem("ccl-theme");
     return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
@@ -94,6 +103,24 @@ export default function App() {
     api.getStats(statsSince).then(setStats);
   }, [statsSince]);
 
+  const loadStatus = () => {
+    setSvcBusy(true);
+    setSvcErr(null);
+    api
+      .getServiceStatus()
+      .then(setSvcStatus)
+      .catch((e) => setSvcErr(String(e)))
+      .finally(() => setSvcBusy(false));
+  };
+
+  // Poll service status globally (independent of the active tab) so the bottom
+  // bar always reflects current incidents.
+  useEffect(() => {
+    loadStatus();
+    const timer = window.setInterval(loadStatus, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const r = resizeRef.current;
@@ -143,6 +170,8 @@ export default function App() {
   useEffect(() => {
     api.getState().then(setState);
     api.getTunnel().then(setTunnel);
+    api.getUsage().then(setUsage);
+    api.getAccount().then(setAccount);
     api.listRequests(MAX_ROWS, 0).then(setRequests);
     // Stats initial fetch handled by the statsSince effect above
 
@@ -155,6 +184,7 @@ export default function App() {
     });
     const unTunnel = onTunnel(setTunnel);
     const unState = onState(setState);
+    const unUsage = onUsage(setUsage);
     const unTraffic = onTraffic((next) => {
       const now = performance.now();
       const prev = trafficSample.current;
@@ -177,6 +207,7 @@ export default function App() {
       unHealth.then((f) => f());
       unTunnel.then((f) => f());
       unState.then((f) => f());
+      unUsage.then((f) => f());
       unTraffic.then((f) => f());
     };
   }, []);
@@ -211,7 +242,14 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header state={state} tunnel={tunnel} theme={theme} onThemeChange={setTheme} />
+      <Header
+        state={state}
+        tunnel={tunnel}
+        account={account}
+        usage={usage}
+        theme={theme}
+        onThemeChange={setTheme}
+      />
 
       <div className="layout" style={{ gridTemplateColumns: gridCols }}>
         <div className="sidebar">
@@ -275,7 +313,14 @@ export default function App() {
               onClear={clearHistory}
             />
           ) : (
-            <AccountPanel />
+            <AccountPanel
+              account={account}
+              usage={usage}
+              status={svcStatus}
+              statusBusy={svcBusy}
+              statusErr={svcErr}
+              onRefreshStatus={loadStatus}
+            />
           )}
         </main>
 
@@ -288,6 +333,8 @@ export default function App() {
           onClose={() => setSelectedId(null)}
         />
       </div>
+
+      <StatusBar status={svcStatus} busy={svcBusy} onRefresh={loadStatus} />
     </div>
   );
 }

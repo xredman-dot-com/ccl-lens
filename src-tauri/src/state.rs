@@ -35,6 +35,24 @@ pub fn db_path() -> PathBuf {
     data_dir().join("history.db")
 }
 
+fn usage_path() -> PathBuf {
+    data_dir().join("usage.json")
+}
+
+/// Last captured quota snapshot, so it survives restarts and the header strip
+/// shows it immediately instead of waiting for the next Claude Code `/usage`.
+pub fn load_usage() -> Option<UsageSnapshot> {
+    let text = std::fs::read_to_string(usage_path()).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn save_usage(snap: &UsageSnapshot) {
+    if let Ok(text) = serde_json::to_string(snap) {
+        std::fs::create_dir_all(data_dir()).ok();
+        let _ = std::fs::write(usage_path(), text);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub port: u16,
@@ -141,7 +159,7 @@ impl AppState {
             tunnel,
             traffic,
             ca,
-            usage: Arc::new(Mutex::new(None)),
+            usage: Arc::new(Mutex::new(load_usage())),
             shutdown_done: AtomicBool::new(false),
         })
     }

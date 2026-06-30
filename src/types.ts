@@ -140,9 +140,20 @@ export interface ServiceComponent {
   status: string;
 }
 
+export interface ServiceIncident {
+  name: string;
+  impact: string;
+  status: string;
+  affected: string[];
+  updated_at: string | null;
+  latest_update: string | null;
+  url: string | null;
+}
+
 export interface ServiceStatus {
   indicator: string | null;
   description: string | null;
   components: ServiceComponent[];
-  incidents: string[];
+  incidents: ServiceIncident[];
+  maintenances: ServiceIncident[];
 }

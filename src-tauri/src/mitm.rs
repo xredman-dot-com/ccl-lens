@@ -23,7 +23,12 @@ use tokio_rustls::TlsAcceptor;
 use tokio_stream::wrappers::ReceiverStream;
 
 const MAX_FAILOVER: usize = 3;
-const HEADERS_TIMEOUT: Duration = Duration::from_secs(30);
+/// Deadline for an upstream to return *response headers* (not the body — streams
+/// run for minutes). Kept generous on purpose: a dead/blackholed upstream is
+/// caught fast by connect_timeout + HTTP/2 keepalive, so this only fires for a
+/// slow-but-alive upstream, where failing over would re-send a non-idempotent
+/// POST /v1/messages and risk double generation/billing.
+const HEADERS_TIMEOUT: Duration = Duration::from_secs(20);
 const HEAD_CAP: usize = 32 * 1024;
 const TAIL_CAP: usize = 16 * 1024;
 

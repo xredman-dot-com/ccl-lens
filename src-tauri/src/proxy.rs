@@ -89,7 +89,7 @@ const MAX_FAILOVER: usize = 3;
 /// Per-upstream connect/handshake deadline. Without this a stalled socks5/http
 /// handshake hangs Claude Code forever instead of failing over to the next
 /// upstream. Matches reqwest's connect_timeout used by the health probes.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 
 fn finalize_error(
     ctx: &ProxyCtx,

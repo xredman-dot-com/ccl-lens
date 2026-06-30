@@ -87,8 +87,20 @@ pub fn client_for(up: &Upstream) -> Option<Client> {
 fn build_client(up: &Upstream) -> Option<Client> {
     let mut b = Client::builder()
         .no_proxy()
-        .connect_timeout(Duration::from_secs(15))
-        .pool_idle_timeout(Duration::from_secs(90))
+        // Short connect deadline: a dead route should fail over fast, not hang.
+        // Connect is fully idempotent (nothing sent yet) so this is safe to keep tight.
+        .connect_timeout(Duration::from_secs(8))
+        // Keep the pool short-lived and actively probed so a network route change
+        // (ClashX TUN toggle, Wi-Fi switch) doesn't leave dead sockets that the
+        // next request blindly reuses and stalls on.
+        .pool_idle_timeout(Duration::from_secs(30))
+        .tcp_keepalive(Duration::from_secs(15))
+        // HTTP/2 keepalive PINGs detect a silently-dropped connection in
+        // ~interval+timeout instead of stalling until the per-request deadline,
+        // and keep an idle upstream warm so failover skips a fresh handshake.
+        .http2_keep_alive_interval(Duration::from_secs(10))
+        .http2_keep_alive_timeout(Duration::from_secs(5))
+        .http2_keep_alive_while_idle(true)
         // no overall timeout: streaming responses can run for minutes
         .user_agent("ccl-lens/0.1");
     match up.kind {
@@ -253,34 +265,31 @@ impl Pool {
     }
 
     /// Feed a failed real request back into health; circuit-break on threshold.
-    /// On circuit break, also rebuilds the reqwest client to flush stale pooled
-    /// TCP connections — this ensures recovery works after a network route change
-    /// (e.g. ClashX TUN toggled off then on).
+    /// Rebuilds the reqwest client on *every* failure to flush stale pooled TCP
+    /// connections immediately — a network route change (e.g. ClashX TUN toggled
+    /// off then on) leaves dead sockets in the pool, and waiting for a 2nd failure
+    /// to rebuild means the very next request reuses a dead one and stalls too.
+    /// The rebuild only swaps the client for *future* requests; in-flight attempts
+    /// hold their own clone and are unaffected.
     pub fn record_failure(&self, id: &str, err: String) {
         let mut inner = self.inner.write().unwrap();
-        let needs_rebuild = {
-            if let Some(h) = inner.health.get_mut(id) {
+        match inner.health.get_mut(id) {
+            Some(h) => {
                 h.failure += 1;
                 h.consecutive_failures += 1;
                 h.last_error = Some(err);
                 h.last_checked = Some(now_ms());
                 if h.consecutive_failures >= CIRCUIT_THRESHOLD {
                     h.state = HealthState::Down;
-                    true
-                } else {
-                    false
                 }
-            } else {
-                false
             }
-        };
-        if needs_rebuild {
-            let u_opt = inner.upstreams.iter().find(|u| u.id == id).cloned();
-            if let Some(u) = u_opt {
-                if u.enabled {
-                    if let Some(c) = build_client(&u) {
-                        inner.clients.insert(id.to_string(), c);
-                    }
+            None => return,
+        }
+        let u_opt = inner.upstreams.iter().find(|u| u.id == id).cloned();
+        if let Some(u) = u_opt {
+            if u.enabled {
+                if let Some(c) = build_client(&u) {
+                    inner.clients.insert(id.to_string(), c);
                 }
             }
         }
